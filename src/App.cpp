@@ -1,6 +1,6 @@
 #include "AppComponent.hpp"
 
-#include "controller/StaticController.hpp"
+#include "controller/Iceberg/DataController.hpp"
 #include "controller/Iceberg/IcebergCatalogController.hpp"
 
 #include "oatpp/network/Server.hpp"
@@ -15,7 +15,7 @@ void run() {
     /* Get router component */
     OATPP_COMPONENT(std::shared_ptr<oatpp::web::server::HttpRouter>, router);
 
-    router->addController(StaticController::createShared());
+    router->addController(DataController::createShared());
     router->addController(IcebergCatalogController::createShared());
 
     /* Get connection handler component */

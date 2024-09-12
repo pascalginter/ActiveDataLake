@@ -26,28 +26,7 @@
 
 #include "../../virtualization/VirtualizedFile.hpp"
 #include "../S3InterfaceUtils.hpp"
-
-std::shared_ptr<arrow::io::BufferReader> buffer_reader = nullptr;
-
-void prepareInMemoryParquet(){
-    btrblocks::arrow::DirectoryReader directory("../data/lineitem");
-    std::shared_ptr<arrow::Table> table;
-    directory.ReadTable(&table);
-    std::cout << table->schema()->ToString() << std::endl;
-
-    std::shared_ptr<arrow::io::BufferOutputStream> buffer_output_stream;
-    PARQUET_ASSIGN_OR_THROW(buffer_output_stream, arrow::io::BufferOutputStream::Create());
-
-    // Write Arrow table to in-memory parquet
-    parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), buffer_output_stream);
-
-
-
-    // Get the buffer containing parquet data
-    std::shared_ptr<arrow::Buffer> buffer;
-    PARQUET_ASSIGN_OR_THROW(buffer, buffer_output_stream->Finish());
-    buffer_reader = std::make_shared<arrow::io::BufferReader>(buffer);
-}
+#include "../../dto/IcebergMetadataDto.hpp"
 
 class IcebergCatalogController : public oatpp::web::server::api::ApiController {
 public:
@@ -56,8 +35,6 @@ public:
     {}
 private:
     oatpp::json::ObjectMapper objectMapper;
-    std::unordered_map<std::string, std::shared_ptr<VirtualizedFile>> tableFiles;
-
 public:
 
     static std::shared_ptr<IcebergCatalogController> createShared(
@@ -66,44 +43,18 @@ public:
         return std::make_shared<IcebergCatalogController>(apiContentMappers);
     }
 
-    ENDPOINT("GET", "/metadata/{tableName}.json", getMetadata,
-             PATH(String, tableName)){
-        return createResponse(Status::CODE_200, "OK");
-    }
-
-    ENDPOINT("HEAD", "/data/{fileName}", headData,
-             REQUEST(std::shared_ptr<IncomingRequest>, request),
+    ENDPOINT("HEAD", "/metadata/{fileName}", headMetadata,
              PATH(String, fileName)){
-        std::string_view fileNameView(fileName->c_str());
-        if (!fileNameView.ends_with(".parquet")){
-            return createResponse(Status::CODE_501, "File format is not supported");
-        }
-        std::string tableName(fileNameView.begin(), fileName->size() - 8);
-        if (tableFiles.find(tableName) == tableFiles.end()){
-            tableFiles[tableName] = VirtualizedFile::createFileAbstraction(tableName);
-        }
-        auto& file = tableFiles[tableName];
-        auto response = createResponse(Status::CODE_200, "");
-        S3InterfaceUtils::putByteSizeHeader(response, file->size());
+        auto response = createResponse(Status::CODE_200, "OK");
         return response;
     }
 
-    ENDPOINT("GET", "/data/{fileName}", getData,
+    ENDPOINT("GET", "/metadata/{fileName}", getMetadata,
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
-        std::string_view fileNameView(fileName->c_str());
-        if (!fileNameView.ends_with(".parquet")){
-            return createResponse(Status::CODE_501, "File format is not supported");
-        }
-        std::string tableName(fileNameView.begin(), fileName->size() - 8);
-        if (tableFiles.find(tableName) == tableFiles.end()){
-            std::cout << "create abstraction" << std::endl;
-            tableFiles[tableName] = VirtualizedFile::createFileAbstraction(tableName);
-        }
         auto range = S3InterfaceUtils::extractRange(request);
-        auto response = createResponse(Status::CODE_200, tableFiles[tableName]->getRange(range));
-        S3InterfaceUtils::putByteSizeHeader(response, tableFiles[tableName]->size());
-        return response;
+        std::cout << range.begin << " " << range.end << std::endl;
+        return createResponse(Status::CODE_200, "OK");
     }
 };
 
