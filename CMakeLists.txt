@@ -17,7 +17,7 @@ find_package(oatpp 1.4.0 REQUIRED)
 # C++ build options
 # -------------------------------------------------------------------------------
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -g")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -g")
@@ -39,10 +39,12 @@ include(cmake/croaring.cmake)
 # ---------------------------------------------------------------------------
 # Components
 # ---------------------------------------------------------------------------
-add_executable(ActiveDataLake src/App.cpp)
+add_executable(ActiveDataLake src/App.cpp src/virtualization/VirtualizedFile.cpp)
 target_link_libraries(ActiveDataLake PRIVATE
         oatpp::oatpp
         btrblocks
+        arrow
+        parquet
         croaring
 )
 # ---------------------------------------------------------------------------

@@ -5,6 +5,8 @@
 
 #include "oatpp/network/Server.hpp"
 
+#include <btrblocks/scheme/SchemePool.hpp>
+
 #include <iostream>
 
 void run() {
@@ -35,6 +37,8 @@ void run() {
  *  main
  */
 int main(int argc, const char * argv[]) {
+
+    btrblocks::SchemePool::refresh();
 
     oatpp::Environment::init();
 

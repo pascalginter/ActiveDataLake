@@ -7,8 +7,11 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#include "btrblocks.hpp"
+#include <arrow/io/api.h>
+#include <parquet/arrow/writer.h>
 
+#include <btrblocks/arrow/DirectoryReader.hpp>
+#include <btrblocks.hpp>
 
 #include "oatpp/web/server/api/ApiController.hpp"
 #include "oatpp/json/ObjectMapper.hpp"
@@ -21,42 +24,30 @@
 #include "../../dto/RequestDto.hpp"
 #include "oatpp/json/Serializer.hpp"
 
-class MemoryMappedFile{
-private:
-    int file;
-    void* data;
-    uintptr_t size;
+#include "../../virtualization/VirtualizedFile.hpp"
+#include "../S3InterfaceUtils.hpp"
 
-public:
-    explicit MemoryMappedFile(const char* fileName){
+std::shared_ptr<arrow::io::BufferReader> buffer_reader = nullptr;
 
-        file = open(fileName, O_RDONLY);
-        if (file < 0){
-            std::cout << "file < 0" << std::endl;
-            exit(2);
-        }
-        size = lseek(file, 0, SEEK_END);
-        data = mmap(nullptr, size, PROT_READ, MAP_SHARED, file, 0);
-        if (data == MAP_FAILED){
-            std::cout << "MAP_FAILED" << std::endl;
-            exit(3);
-        }
-    }
-    ~MemoryMappedFile(){
-        munmap(data, size);
-        close(file);
-    }
+void prepareInMemoryParquet(){
+    btrblocks::arrow::DirectoryReader directory("../data/lineitem");
+    std::shared_ptr<arrow::Table> table;
+    directory.ReadTable(&table);
+    std::cout << table->schema()->ToString() << std::endl;
 
-    const char* begin(){
-        return static_cast<char*>(data);
-    }
+    std::shared_ptr<arrow::io::BufferOutputStream> buffer_output_stream;
+    PARQUET_ASSIGN_OR_THROW(buffer_output_stream, arrow::io::BufferOutputStream::Create());
 
-    const char* end(){
-        return  static_cast<char*>(data) + size;
-    }
-};
+    // Write Arrow table to in-memory parquet
+    parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), buffer_output_stream);
 
-thread_local MemoryMappedFile mappedFile("../data/lineitem.parquet");
+
+
+    // Get the buffer containing parquet data
+    std::shared_ptr<arrow::Buffer> buffer;
+    PARQUET_ASSIGN_OR_THROW(buffer, buffer_output_stream->Finish());
+    buffer_reader = std::make_shared<arrow::io::BufferReader>(buffer);
+}
 
 class IcebergCatalogController : public oatpp::web::server::api::ApiController {
 public:
@@ -65,6 +56,7 @@ public:
     {}
 private:
     oatpp::json::ObjectMapper objectMapper;
+    std::unordered_map<std::string, std::shared_ptr<VirtualizedFile>> tableFiles;
 
 public:
 
@@ -79,38 +71,38 @@ public:
         return createResponse(Status::CODE_200, "OK");
     }
 
-    ENDPOINT("HEAD", "data/lineitem.parquet", headLineitem){
-        // Create a response with a 200 OK status.
+    ENDPOINT("HEAD", "/data/{fileName}", headData,
+             REQUEST(std::shared_ptr<IncomingRequest>, request),
+             PATH(String, fileName)){
+        std::string_view fileNameView(fileName->c_str());
+        if (!fileNameView.ends_with(".parquet")){
+            return createResponse(Status::CODE_501, "File format is not supported");
+        }
+        std::string tableName(fileNameView.begin(), fileName->size() - 8);
+        if (tableFiles.find(tableName) == tableFiles.end()){
+            tableFiles[tableName] = VirtualizedFile::createFileAbstraction(tableName);
+        }
+        auto& file = tableFiles[tableName];
         auto response = createResponse(Status::CODE_200, "");
-
-        // Set headers like in the S3 HEAD request example
-        response->putHeader("x-amz-id-2", "aBcdEfghijkLmnopQrstuVwxyz1234567890abCDEFGhijKlmnOpQrstUvWXYZ==");
-        response->putHeader("x-amz-request-id", "1234ABCDE56789FGHIJ0KLMNOPQRS1234TUV5678");
-        response->putHeader("Date", "Mon, 02 Sep 2024 15:03:45 GMT");
-        response->putHeader("Last-Modified", "Fri, 30 Aug 2024 12:21:15 GMT");
-        response->putHeader("ETag", "\"1234567890abcdef1234567890abcdef\"");
-        response->putHeader("Accept-Ranges", "bytes");
-        response->putHeader("Content-Type", "application/octet-stream");
-        response->putHeader("Content-Length", "2713161713");
-        response->putHeader("Server", "AmazonS3");
-
-        // Return the response
+        S3InterfaceUtils::putByteSizeHeader(response, file->size());
         return response;
     }
 
-    ENDPOINT("GET", "/data/lineitem.parquet", getLineitem,
-             REQUEST(std::shared_ptr<IncomingRequest>, request)){
-
-        std::string range = request->getHeaders().get("range");
-        size_t firstSep = range.find('=');
-        size_t secondSep = range.find('-');
-        long long rangeBegin = std::stoll(range.substr(firstSep + 1, secondSep - firstSep));
-        long long rangeEnd = std::stoll(range.substr(secondSep+1));
-        size_t size = rangeEnd - rangeBegin + 1;
-        auto blobDto = BlobDto::createShared();
-
-        auto response = createResponse(Status::CODE_200, std::string{mappedFile.begin() + rangeBegin, size});
-        response->putHeader("Content-Length", std::to_string(size));
+    ENDPOINT("GET", "/data/{fileName}", getData,
+             REQUEST(std::shared_ptr<IncomingRequest>, request),
+             PATH(String, fileName)){
+        std::string_view fileNameView(fileName->c_str());
+        if (!fileNameView.ends_with(".parquet")){
+            return createResponse(Status::CODE_501, "File format is not supported");
+        }
+        std::string tableName(fileNameView.begin(), fileName->size() - 8);
+        if (tableFiles.find(tableName) == tableFiles.end()){
+            std::cout << "create abstraction" << std::endl;
+            tableFiles[tableName] = VirtualizedFile::createFileAbstraction(tableName);
+        }
+        auto range = S3InterfaceUtils::extractRange(request);
+        auto response = createResponse(Status::CODE_200, tableFiles[tableName]->getRange(range));
+        S3InterfaceUtils::putByteSizeHeader(response, tableFiles[tableName]->size());
         return response;
     }
 };
