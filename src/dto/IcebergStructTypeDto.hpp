@@ -12,6 +12,8 @@ class IcebergStructTypeDto : public oatpp::DTO {
     DTO_INIT(IcebergStructTypeDto, DTO);
 
     DTO_FIELD(String, type, "type") = "struct";
+
+
     DTO_FIELD(List<Object<IcebergFieldDto>>, fields, "fields");
 };
 

@@ -14,7 +14,8 @@ class IcebergFieldDto : public oatpp::DTO {
     DTO_FIELD(Int32, id, "id");
     DTO_FIELD(String, name, "name");
     DTO_FIELD(Boolean, required, "required");
-    DTO_FIELD(Object<IcebergTypeDto>, type, "type");
+    // Sadly, OneOf seems to be an imagination of chatgpt
+    DTO_FIELD(Any, type, "type");
 };
 
 #include OATPP_CODEGEN_END(DTO)

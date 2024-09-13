@@ -4,10 +4,15 @@
 #include "oatpp/macro/codegen.hpp"
 #include "oatpp/Types.hpp"
 
+#include "IcebergSortField.hpp"
+
 #include OATPP_CODEGEN_BEGIN(DTO)
 
 class IcebergSortOrderDto : public oatpp::DTO {
     DTO_INIT(IcebergSortOrderDto, DTO);
+
+    DTO_FIELD(Int32, orderId, "order-id");
+    DTO_FIELD(List<Object<IcebergSortFieldDto>>, fields, "fields");
 };
 
 #include OATPP_CODEGEN_END(DTO)
