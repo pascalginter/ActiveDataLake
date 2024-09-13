@@ -2,7 +2,7 @@
 # ActiveDataLake
 # -------------------------------------------------------------------------------
 cmake_minimum_required(VERSION 3.12)
-project(ActiveBtrBlocks VERSION 0.0.1)
+project(ActiveDataLake VERSION 0.0.1)
 
 
 set(CMAKE_PREFIX_PATH "~/Documents/Universitat/ActiveDataLake/build/vendor/btrblocks/src/btrblocks_src-build/vendor/croaring/lib" ${CMAKE_PREFIX_PATH})
@@ -33,6 +33,7 @@ include("cmake/clang-tidy.cmake") # Integrate clang-tidy
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
+include("cmake/avro.cmake")
 include("cmake/btrblocks.cmake")
 include(cmake/croaring.cmake)
 
@@ -44,6 +45,7 @@ target_link_libraries(ActiveDataLake PRIVATE
         oatpp::oatpp
         btrblocks
         arrow
+        avro
         parquet
         croaring
 )

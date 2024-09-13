@@ -1,0 +1,34 @@
+{
+  "type": "record",
+  "name": "manifest_file",
+  "fields": [
+    { "name": "manifest_path", "type": "string" },
+    { "name": "manifest_length", "type": "int" },
+    { "name": "partition_spec_id", "type": "int" },
+    { "name": "content", "type": "int" },
+    { "name": "sequence_number", "type": "int" },
+    { "name": "min_sequence_number", "type": "int" },
+    { "name": "added_snapshot_id", "type":  "int" },
+    { "name": "added_data_files_count", "type": "int" },
+    { "name": "existing_data_files_count", "type": "int" },
+    { "name": "deleted_data_files_count", "type": "int" },
+    { "name": "added_rows_count", "type": "int" },
+    { "name": "existing_rows_count", "type": "int" },
+    { "name": "deleted_rows_count", "type": "int" },
+    { "name": "partitions",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "field_summary",
+          "fields": [
+            { "name": "contains_null", "type": "boolean" },
+            { "name": "contains_nan", "type":  ["null", "boolean"] },
+            { "name": "lower_bound", "type":  ["null", "bytes"] },
+            { "name": "upper_bound", "type": ["null", "bytes"] }
+          ]
+        }
+      }
+    }
+  ]
+}
