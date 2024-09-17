@@ -20,8 +20,6 @@
 
 #include OATPP_CODEGEN_BEGIN(ApiController) //<- Begin Codegen
 
-#include "../../dto/BlobDto.hpp"
-#include "../../dto/RequestDto.hpp"
 #include "oatpp/json/Serializer.hpp"
 
 #include "../../virtualization/VirtualizedFile.hpp"
@@ -74,7 +72,7 @@ public:
             tableFiles[tableName] = VirtualizedFile::createFileAbstraction(tableName);
         }
 
-        auto range = S3InterfaceUtils::extractRange(request);
+        auto range = S3InterfaceUtils::extractRange(request, tableFiles[tableName]->size());
         auto response = createResponse(Status::CODE_200, tableFiles[tableName]->getRange(range));
         S3InterfaceUtils::putByteSizeHeader(response, tableFiles[tableName]->size());
         return response;
