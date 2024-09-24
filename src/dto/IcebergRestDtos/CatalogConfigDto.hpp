@@ -9,8 +9,14 @@
 class ConfigDto : public oatpp::DTO {
     DTO_INIT(ConfigDto, DTO)
 
-    DTO_FIELD(String, description, "description") = "";
-    DTO_FIELD()
+    DTO_FIELD(List<String>, endpoints, "endpoints") = {
+            "GET /v1/{prefix}/namespaces",
+            "GET /v1/{prefix}/namespaces/{namespace}"
+            "GET /v1/{prefix}/namespaces/{namespace}/tables"
+    };
+
+    DTO_FIELD(Fields<Any>, defaults, "defaults") = {};
+    DTO_FIELD(Fields<Any>, overrides, "overrides") = {};
 };
 
 #include OATPP_CODEGEN_END(DTO)

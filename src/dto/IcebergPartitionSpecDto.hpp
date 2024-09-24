@@ -11,8 +11,8 @@
 class IcebergPartitionSpecDto : public oatpp::DTO {
     DTO_INIT(IcebergPartitionSpecDto, DTO)
 
-    DTO_FIELD(Int32, specId, "spec-id");
-    DTO_FIELD(List<Object<IcebergPartitionFieldDto>>, fields, "fields");
+    DTO_FIELD(Int32, specId, "spec-id") = 0;
+    DTO_FIELD(List<Object<IcebergPartitionFieldDto>>, fields, "fields") = {};
 };
 
 #include OATPP_CODEGEN_END(DTO)

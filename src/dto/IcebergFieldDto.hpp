@@ -11,11 +11,11 @@
 class IcebergFieldDto : public oatpp::DTO {
     DTO_INIT(IcebergFieldDto, DTO);
 
-    DTO_FIELD(Int32, id, "id");
-    DTO_FIELD(String, name, "name");
-    DTO_FIELD(Boolean, required, "required");
+    DTO_FIELD(Int32, id, "id") = 0;
+    DTO_FIELD(String, name, "name") = "l_orderkey";
+    DTO_FIELD(Boolean, required, "required") = true;
     // Sadly, OneOf seems to be an imagination of chatgpt
-    DTO_FIELD(Any, type, "type");
+    DTO_FIELD(Any, type, "type") = String("int");
 };
 
 #include OATPP_CODEGEN_END(DTO)

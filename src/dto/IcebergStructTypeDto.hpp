@@ -14,7 +14,7 @@ class IcebergStructTypeDto : public oatpp::DTO {
     DTO_FIELD(String, type, "type") = "struct";
 
 
-    DTO_FIELD(List<Object<IcebergFieldDto>>, fields, "fields");
+    DTO_FIELD(List<Object<IcebergFieldDto>>, fields, "fields") = {IcebergFieldDto::createShared()};
 };
 
 #include OATPP_CODEGEN_END(DTO)

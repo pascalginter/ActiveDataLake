@@ -9,7 +9,7 @@
 class IcebergSnapshotSummaryDto : public oatpp::DTO {
     DTO_INIT(IcebergSnapshotSummaryDto, DTO)
 
-    DTO_FIELD(String, operation);
+    DTO_FIELD(String, operation, "operation") = "append";
 };
 
 #include OATPP_CODEGEN_END(DTO)

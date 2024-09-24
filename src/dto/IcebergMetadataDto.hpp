@@ -21,17 +21,17 @@ class IcebergMetadataDto : public oatpp::DTO {
     DTO_FIELD(Int64, lastSequenceNumber, "last-sequence-number") = 1;
     DTO_FIELD(Int64, lastUpdatedMs, "last-updated-ms") = 1;
     DTO_FIELD(Int64, lastColumnId, "last-column-id") = 80;
-    DTO_FIELD(List<Object<IcebergSchemaDto>>, schemas, "schemas") = List<Object<IcebergSchemaDto>>::createShared();
+    DTO_FIELD(List<Object<IcebergSchemaDto>>, schemas, "schemas") = {IcebergSchemaDto::createShared()};
     DTO_FIELD(Int32, currentSchemaId, "current-schema-id") = 0;
-    DTO_FIELD(List<Object<IcebergPartitionSpecDto>>, partitionSpecs, "partition-specs") = List<Object<IcebergPartitionSpecDto>>::createShared();
-    DTO_FIELD(Int32, defaultIdSpec, "default-id-spec") = 0;
+    DTO_FIELD(List<Object<IcebergPartitionSpecDto>>, partitionSpecs, "partition-specs") = {IcebergPartitionSpecDto::createShared()};
+    DTO_FIELD(Int32, defaultSpecId, "default-spec-id") = 0;
     DTO_FIELD(Int32, lastPartitionId, "last-partition-id") = 0;
     // properties (optional)
-    DTO_FIELD(Int64, currentSnapshotId, "current-snapshot-id") = 80;
-    DTO_FIELD(List<Object<IcebergSnapshotDto>>, snapshots, "snapshots") = List<Object<IcebergSnapshotDto>>::createShared();
+    DTO_FIELD(Int64, currentSnapshotId, "current-snapshot-id") = 0l;
+    DTO_FIELD(List<Object<IcebergSnapshotDto>>, snapshots, "snapshots") = {IcebergSnapshotDto::createShared()};
     // snapshot-log (optional)
     // metadata-log (optional)
-    DTO_FIELD(List<Object<IcebergSortOrderDto>>, sortOrders, "sort-orders") = List<Object<IcebergSortOrderDto>>::createShared();
+    DTO_FIELD(List<Object<IcebergSortOrderDto>>, sortOrders, "sort-orders") = {IcebergSortOrderDto::createShared()};
     DTO_FIELD(Int32, defaultSortOrderId, "default-sort-order-id") = 0;
 };
 
