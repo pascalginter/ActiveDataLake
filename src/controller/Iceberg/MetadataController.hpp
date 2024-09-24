@@ -40,6 +40,69 @@ public:
 
     std::string buffer;
 
+    void prepareMetadata(){
+        IcebergMetadataDto::Wrapper metadata = IcebergMetadataDto::createShared();
+        metadata->schemas->push_back(IcebergSchemaDto::createShared());
+        metadata->snapshots->push_back(IcebergSnapshotDto::createShared());
+        buffer = objectMapper.writeToString(metadata);
+    }
+
+    void prepareManifestList(){
+        avro::ValidSchema schema;
+        std::ifstream in("../avro_schemas/manifest-list.json");
+
+        avro::compileJsonSchema(in, schema);
+        manifest_file manifest;
+        manifest.manifest_path = "http://localhost:8000/manifest-file/1.avro";
+        manifest.manifest_length = 1000;
+        manifest.partition_spec_id = 0;
+        manifest.content = 0;
+        manifest.sequence_number = 0;
+        manifest.min_sequence_number = 0;
+        manifest.added_snapshot_id = 0;
+        manifest.existing_data_files_count = 1;
+        manifest.deleted_data_files_count = 0;
+        manifest.added_rows_count = 0;
+        manifest.existing_rows_count = 600000;
+        manifest.deleted_rows_count = 0;
+        r508 summary;
+        summary.contains_null = false;
+        summary.contains_nan.set_bool(false);
+        summary.lower_bound.set_null();
+        summary.upper_bound.set_null();
+        manifest.partitions.set_array({summary});
+        std::unique_ptr<avro::OutputStream> out = avro::fileOutputStream("temp.avro");
+        avro::DataFileWriter<manifest_file> dataFileWriter(std::move(out), schema);
+
+        dataFileWriter.write(manifest);
+        dataFileWriter.flush();
+        dataFileWriter.close();
+
+        schema.
+
+        std::ifstream avroIn("temp.avro");
+        buffer = std::string((std::istreambuf_iterator<char>(avroIn)), std::istreambuf_iterator<char>());
+    }
+
+    void prepareManifestFile(){
+        std::cout << "head manifest-file" << std::endl;
+        avro::ValidSchema schema;
+        std::ifstream in("../avro_schemas/manifest-file.json");
+        avro::compileJsonSchema(in, schema);
+
+        manifest_entry manifest;
+        manifest.data_file.file_path = "http://localhost:8000/data/lineitem.parquet";
+        std::unique_ptr<avro::OutputStream> out = avro::fileOutputStream("temp.avro");
+        avro::DataFileWriter<manifest_entry> dataFileWriter(std::move(out), schema);
+
+        dataFileWriter.write(manifest);
+        dataFileWriter.flush();
+        dataFileWriter.close();
+
+        std::ifstream avroIn("temp.avro");
+        buffer = std::string((std::istreambuf_iterator<char>(avroIn)), std::istreambuf_iterator<char>());
+    }
+
     [[nodiscard]] std::shared_ptr<OutgoingResponse> respondWithBufferSize(){
         auto response = createResponse(Status::CODE_200, "");
         std::cout << buffer.size() << std::endl;
@@ -60,11 +123,7 @@ public:
              PATH(String, fileName)) {
         assert(fileName->ends_with(".json"));
         std::cout << "head metadata" << std::endl;
-        IcebergMetadataDto::Wrapper metadata = IcebergMetadataDto::createShared();
-        metadata->schemas->push_back(IcebergSchemaDto::createShared());
-        metadata->snapshots->push_back(IcebergSnapshotDto::createShared());
-        buffer = objectMapper.writeToString(metadata);
-
+        prepareMetadata();
         return respondWithBufferSize();
     }
 
@@ -72,44 +131,14 @@ public:
              PATH(String, fileName)) {
         assert(fileName->ends_with(".avro"));
         std::cout << "head manifest-list" << std::endl;
-        avro::ValidSchema schema;
-        std::ifstream in("../avro_schemas/manifest-list.json");
-
-        avro::compileJsonSchema(in, schema);
-        manifest_file manifest;
-        manifest.manifest_path = "http://localhost:8000/manifest-file/0.avro";
-        std::unique_ptr<avro::OutputStream> out = avro::fileOutputStream("temp.avro");
-        avro::DataFileWriter<manifest_file> dataFileWriter(std::move(out), schema);
-
-        dataFileWriter.write(manifest);
-        dataFileWriter.flush();
-        dataFileWriter.close();
-
-        std::ifstream avroIn("temp.avro");
-        buffer = std::string((std::istreambuf_iterator<char>(avroIn)), std::istreambuf_iterator<char>());
+        prepareManifestList();
         return respondWithBufferSize();
     }
 
     ENDPOINT("HEAD", "/manifest-file/{fileName}", headManifestFile,
              PATH(String, fileName)){
         assert(fileName->ends_with(".avro"));
-        std::cout << "head manifest-file" << std::endl;
-        avro::ValidSchema schema;
-        std::ifstream in("../avro_schemas/manifest-file.json");
-        avro::compileJsonSchema(in, schema);
-
-        manifest_entry manifest;
-        manifest.data_file.file_path = "http://localhost:8000/data/lineitem.parquet";
-        std::unique_ptr<avro::OutputStream> out = avro::fileOutputStream("temp.avro");
-        avro::DataFileWriter<manifest_entry> dataFileWriter(std::move(out), schema);
-
-        dataFileWriter.write(manifest);
-        dataFileWriter.flush();
-        dataFileWriter.close();
-
-        std::ifstream avroIn("temp.avro");
-        buffer = std::string((std::istreambuf_iterator<char>(avroIn)), std::istreambuf_iterator<char>());
-
+        prepareManifestFile();
         return respondWithBufferSize();
     }
 
@@ -117,6 +146,7 @@ public:
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
         std::cout << "get metadata" << std::endl;
+        prepareMetadata();
         auto range = S3InterfaceUtils::extractRange(request, buffer.size());
         std::cout << range.begin << " " << range.end << " (of " << buffer.size() << ")" << std::endl;
         return createResponse(Status::CODE_200, buffer);
@@ -125,17 +155,20 @@ public:
     ENDPOINT("GET", "/manifest-list/{fileName}", getManifestList,
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
-        // ISSUE: trino doesn't call head first -> empty buffer + no range!
         std::cout << "get manifest-list " << fileName->c_str() << std::endl;
+        prepareManifestList();
         auto range = S3InterfaceUtils::extractRange(request, buffer.size());
         std::cout << range.begin << " " << range.end << " (of " << buffer.size() << ")" << std::endl;
-        return createResponse(Status::CODE_200, buffer);
+        auto response = createResponse(Status::CODE_200, buffer);
+        S3InterfaceUtils::putByteSizeHeader(response, buffer.size());
+        return response;
     }
 
     ENDPOINT("GET", "/manifest-file/{fileName}", getManifestFile,
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
         std::cout << "get manifest-file" << std::endl;
+        prepareManifestFile();
         auto range = S3InterfaceUtils::extractRange(request, buffer.size());
         std::cout << range.begin << " " << range.end << " (of " << buffer.size() << ")" << std::endl;
         return createResponse(Status::CODE_200, buffer);
