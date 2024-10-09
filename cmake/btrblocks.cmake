@@ -22,6 +22,8 @@ set(BTRBLOCKS_INCLUDE_DIR ${install_dir}/src/btrblocks_src/btrblocks)
 set(BTRFILES_LIBRARY_PATH ${install_dir}/btrblocks_src-build/libbtrfiles.so)
 set(BTRFILES_INCLUDE_DIR ${install_dir}/src/btrblocks_src/btrfiles)
 
+file(MAKE_DIRECTORY ${BTRBLOCKS_INCLUDE_DIR})
+
 add_library(btrblocks SHARED IMPORTED)
 set_property(TARGET btrblocks PROPERTY IMPORTED_LOCATION ${BTRBLOCKS_LIBRARY_PATH})
 set_property(TARGET btrblocks APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${BTRBLOCKS_INCLUDE_DIR})

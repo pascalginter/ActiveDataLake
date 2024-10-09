@@ -7,7 +7,6 @@ project(ActiveBtrBlocks VERSION 0.0.1)
 
 set(CMAKE_PREFIX_PATH "~/Documents/Universitat/ActiveDataLake/build/vendor/btrblocks/src/btrblocks_src-build/vendor/croaring/lib" ${CMAKE_PREFIX_PATH})
 
-find_package(oatpp 1.4.0 REQUIRED)
 
 # -------------------------------------------------------------------------------
 # Define compile-time flags
@@ -16,7 +15,6 @@ find_package(oatpp 1.4.0 REQUIRED)
 # -------------------------------------------------------------------------------
 # C++ build options
 # -------------------------------------------------------------------------------
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -g")
@@ -33,15 +31,17 @@ include("cmake/clang-tidy.cmake") # Integrate clang-tidy
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
-include("cmake/btrblocks.cmake")
+include(cmake/arrow.cmake)
+include(cmake/btrblocks.cmake)
 include(cmake/croaring.cmake)
+include(cmake/oatpp.cmake)
 
 # ---------------------------------------------------------------------------
 # Components
 # ---------------------------------------------------------------------------
 add_executable(ActiveDataLake src/App.cpp src/virtualization/VirtualizedFile.cpp)
 target_link_libraries(ActiveDataLake PRIVATE
-        oatpp::oatpp
+        oatpp
         btrblocks
         arrow
         parquet
