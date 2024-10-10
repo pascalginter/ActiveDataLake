@@ -1,5 +1,5 @@
-#ifndef MemoryBufferedTransformedFile_H
-#define MemoryBufferedTransformedFile_H
+#ifndef LAZILY_TRANSFORMED_FILE_H
+#define LAZILY_TRANSFORMED_FILE_H
 
 #include <arrow/api.h>
 #include <arrow/io/api.h>
@@ -9,11 +9,13 @@
 
 #include "VirtualizedFile.hpp"
 
-class MemoryBufferedTransformedFile : public VirtualizedFile {
+class LazilyTransformedFile : public VirtualizedFile {
     std::shared_ptr<arrow::Buffer> buffer;
+    size_t size_;
 public:
-    explicit MemoryBufferedTransformedFile(const std::string& path){
-        btrblocks::arrow::DirectoryReader directoryReader(path);
+    explicit LazilyTransformedFile(const std::string& path){
+        /*btrblocks::arrow::DirectoryReader directoryReader(path);
+        directoryReader.
         std::shared_ptr<arrow::Table> table;
         if (!directoryReader.ReadTable(&table).ok()){
             std::cout << "error reading btr directory\n";
@@ -22,12 +24,12 @@ public:
 
         auto out = arrow::io::BufferOutputStream::Create().ValueOrDie();
         PARQUET_THROW_NOT_OK(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), out));
-        buffer = out->Finish().ValueOrDie();
+        buffer = out->Finish().ValueOrDie();*/
     }
 
 
     size_t size() override {
-        return buffer->size();
+        return size_;
     }
 
     std::string getRange(S3InterfaceUtils::ByteRange byteRange) override {
@@ -35,4 +37,4 @@ public:
     }
 };
 
-#endif
+#endif // LAZILY_TRANSFORMED_FILE_H
