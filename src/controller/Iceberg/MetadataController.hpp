@@ -5,7 +5,8 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
+#include <fstream>
+#include <iostream>
 
 #include <arrow/io/api.h>
 #include <parquet/arrow/writer.h>
@@ -18,7 +19,7 @@
 #include "oatpp/macro/codegen.hpp"
 #include "oatpp/macro/component.hpp"
 
-#include "avro/ValidSchema.hh"
+#include <avro/ValidSchema.hh>
 #include <avro/Compiler.hh>
 #include <avro/DataFile.hh>
 
@@ -77,8 +78,6 @@ public:
         dataFileWriter.write(manifest);
         dataFileWriter.flush();
         dataFileWriter.close();
-
-        schema.
 
         std::ifstream avroIn("temp.avro");
         buffer = std::string((std::istreambuf_iterator<char>(avroIn)), std::istreambuf_iterator<char>());

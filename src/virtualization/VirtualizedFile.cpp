@@ -10,14 +10,17 @@ std::shared_ptr<VirtualizedFile> VirtualizedFile::createFileAbstraction(std::str
     std::string localPathPrefix = "../data/";
     if (std::filesystem::exists(localPathPrefix + tableName + ".parquet")) {
         return std::make_shared<LocalFile>(localPathPrefix + tableName + ".parquet");
-    }else if (std::filesystem::exists(localPathPrefix + tableName)){
+    }
+    if (std::filesystem::exists(localPathPrefix + tableName)){
+        std::cout << localPathPrefix + tableName + "/metadata" << std::endl;
+        assert(std::filesystem::exists(localPathPrefix + tableName + "/metadata"));
         if (LAZY_COMPUTATION){
             return std::make_shared<LazilyTransformedFile>(localPathPrefix + tableName);
         }else{
             return std::make_shared<MemoryBufferedTransformedFile>(localPathPrefix + tableName);
         }
-
-    }else{
-        std::cout << "file not found " << tableName << std::endl;
     }
+    std::cout << "file not found " << tableName << std::endl;
+    return nullptr;
+
 }

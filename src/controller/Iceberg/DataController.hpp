@@ -68,7 +68,6 @@ public:
         }
         std::string tableName(fileNameView.begin(), fileName->size() - 8);
         if (tableFiles.find(tableName) == tableFiles.end()){
-            std::cout << "create abstraction" << std::endl;
             tableFiles[tableName] = VirtualizedFile::createFileAbstraction(tableName);
         }
 
