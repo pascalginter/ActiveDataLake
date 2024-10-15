@@ -9,6 +9,7 @@
 #include <parquet/column_writer.h>
 #include <arrow/DirectoryReader.hpp>
 
+#include <cassert>
 
 #include "parquet/ColumnChunkWriter.hpp"
 #include "VirtualizedFile.hpp"
@@ -38,12 +39,16 @@ class LazilyTransformedFile : public VirtualizedFile {
 
     [[nodiscard]] uint64_t getSize(int rowgroup, int column) const {
         int partOffset = metadata->columns[column].part_offset;
+        std::cout << partOffset << std::endl;
         int currentChunk = 0;
         while (currentChunk + metadata->parts[partOffset].num_chunks < rowgroup) {
             currentChunk += metadata->parts[partOffset++].num_chunks;
         }
         int inline_chunk = rowgroup - currentChunk;
-        return metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk].uncompressedSize;
+        uint64_t result =  metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk].uncompressedSize;
+        std::cout << inline_chunk << " " << &metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk] << rowgroup << ", " << column << ": " << result << std::endl;
+        if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
+        return result;
     }
 public:
     explicit LazilyTransformedFile(const std::string& path) :
@@ -80,10 +85,6 @@ public:
             rowGroupBuilder->Finish(rowgroup_bytes);
         }
         parquetMetadata = builder->Finish();
-        std::cout << "--------------------------------------------" << std::endl;
-        std::cout << "totalByte: " << parquetMetadata->RowGroup(0)->total_byte_size() << std::endl;
-        std::cout << "totalCompressedSize: " << parquetMetadata->RowGroup(0)->total_compressed_size() << std::endl;
-        std::cout << "--------------------------------------------" << std::endl;
         serializedParquetMetadata = parquetMetadata->SerializeToString();
         size_ = calculateSizeFromFileMetadata(metadata) + serializedParquetMetadata.size() + 12;
     }
@@ -117,21 +118,24 @@ public:
         for (int i=0; i!=metadata->num_chunks; i++) {
             for (int j=0; j!=metadata->num_columns; j++) {
                 int64_t chunkBegin = parquetMetadata->RowGroup(i)->ColumnChunk(j)->data_page_offset();
-                int64_t chunkEnd = chunkBegin + parquetMetadata->RowGroup(i)->ColumnChunk(j)->total_compressed_size();
-                if (chunkBegin <= byteRange.begin || byteRange.end <= chunkEnd) {
-                    int64_t begin = std::max(chunkBegin, byteRange.end);
+                int64_t chunkEnd = chunkBegin + parquetMetadata->RowGroup(i)->ColumnChunk(j)->total_compressed_size() - 1;
+                if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
+                    int64_t begin = std::max(chunkBegin, byteRange.begin);
                     int64_t end = std::min(chunkEnd, byteRange.end);
                     if (!buffers.contains({i, j})) {
                         std::shared_ptr<arrow::RecordBatchReader> reader;
-                        directoryReader.GetRecordBatchReader({i}, {j, j+1}, &reader);
-                        std::cout << "starting to read" << std::endl;
+                        directoryReader.GetRecordBatchReader({i}, {j}, &reader);
                         auto batch = reader->Next().ValueOrDie();
-                        std::cout << "done reading" << std::endl;
-                        std::cout << batch->ToString() << std::endl;
                         buffers[{i, j}] = ColumnChunkWriter::writeColumnChunk(batch->column(0));
                     }
-                    result.insert(result.end(), buffers[{i,j}].begin() + begin - chunkBegin,
-                        buffers[{i,j}].begin() + end - chunkBegin);
+                    auto& curr_buffer = buffers[{i, j}];
+                    assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
+                    assert(begin - chunkBegin >= 0);
+                    assert(begin - chunkBegin < curr_buffer.size());
+                    assert(end + 1 - chunkBegin >= 0);
+                    assert(end + 1 - chunkBegin <= curr_buffer.size());
+                    result.insert(result.end(), curr_buffer.begin() + begin - chunkBegin,
+                        curr_buffer.begin() + end + 1 - chunkBegin);
                 }
             }
         }
