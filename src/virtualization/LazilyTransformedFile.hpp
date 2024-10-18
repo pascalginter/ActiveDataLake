@@ -10,9 +10,11 @@
 #include <arrow/DirectoryReader.hpp>
 
 #include <cassert>
+#include <avro/Specific.hh>
 
 #include "parquet/ColumnChunkWriter.hpp"
 #include "VirtualizedFile.hpp"
+#include "parquet/ParquetUtils.hpp"
 
 std::mutex global_mtx;
 
@@ -39,16 +41,17 @@ class LazilyTransformedFile : public VirtualizedFile {
 
     [[nodiscard]] uint64_t getSize(int rowgroup, int column) const {
         int partOffset = metadata->columns[column].part_offset;
-        std::cout << partOffset << std::endl;
+        std::cout << column << " eeee " << partOffset << std::endl;
         int currentChunk = 0;
         while (currentChunk + metadata->parts[partOffset].num_chunks < rowgroup) {
             currentChunk += metadata->parts[partOffset++].num_chunks;
         }
+        std::cout << currentChunk << " aadaa " << partOffset << std::endl;
         int inline_chunk = rowgroup - currentChunk;
         uint64_t result =  metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk].uncompressedSize;
-        std::cout << inline_chunk << " " << &metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk] << rowgroup << ", " << column << ": " << result << std::endl;
+        std::cout << inline_chunk << " " << &metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk] << " " << rowgroup << ", " << column << ": " << result << std::endl;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
-        return result;
+        return result + ParquetUtils::writePageWithoutData(result, 64000).size();
     }
 public:
     explicit LazilyTransformedFile(const std::string& path) :
@@ -94,10 +97,9 @@ public:
     }
 
     std::string getRange(S3InterfaceUtils::ByteRange byteRange) override {
-        std::lock_guard lock_guard(global_mtx);
         std::vector<uint8_t> buffer(byteRange.size());
         requestCounter++;
-        std::cout << byteRange.begin << " " << byteRange.end << " (" << byteRange.size() << ")\n";
+        std::cout << "range " << byteRange.begin << " " << byteRange.end << " (" << byteRange.size() << ")\n";
         if (byteRange.begin == size_ - 8) {
             const int32_t s = serializedParquetMetadata.size();
             std::string result = "xxxxPAR1";
@@ -117,8 +119,10 @@ public:
         std::vector<uint8_t> result;
         for (int i=0; i!=metadata->num_chunks; i++) {
             for (int j=0; j!=metadata->num_columns; j++) {
+                int64_t uncompressed_size = parquetMetadata->RowGroup(i)->ColumnChunk(j)->total_uncompressed_size();
+                int64_t num_values = parquetMetadata->RowGroup(i)->ColumnChunk(j)->num_values();
                 int64_t chunkBegin = parquetMetadata->RowGroup(i)->ColumnChunk(j)->data_page_offset();
-                int64_t chunkEnd = chunkBegin + parquetMetadata->RowGroup(i)->ColumnChunk(j)->total_compressed_size() - 1;
+                int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
                 if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
                     int64_t begin = std::max(chunkBegin, byteRange.begin);
                     int64_t end = std::min(chunkEnd, byteRange.end);
@@ -126,9 +130,11 @@ public:
                         std::shared_ptr<arrow::RecordBatchReader> reader;
                         directoryReader.GetRecordBatchReader({i}, {j}, &reader);
                         auto batch = reader->Next().ValueOrDie();
-                        buffers[{i, j}] = ColumnChunkWriter::writeColumnChunk(batch->column(0));
+                        buffers[{i, j}] = ColumnChunkWriter::writeColumnChunk(
+                            ParquetUtils::writePageWithoutData(uncompressed_size, num_values), batch->column(0));
                     }
                     auto& curr_buffer = buffers[{i, j}];
+                    std::cout << curr_buffer.size() << " vs " << chunkEnd - chunkBegin + 1 << std::endl;
                     assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
                     assert(begin - chunkBegin >= 0);
                     assert(begin - chunkBegin < curr_buffer.size());
@@ -139,6 +145,7 @@ public:
                 }
             }
         }
+        std::cout << result.size() << " vs2 " << byteRange.size() << std::endl;
         return std::string(result.begin(), result.end());
     }
 };
