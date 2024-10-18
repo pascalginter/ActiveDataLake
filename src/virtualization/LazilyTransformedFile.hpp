@@ -52,9 +52,9 @@ class LazilyTransformedFile : public VirtualizedFile {
 
     [[nodiscard]] uint64_t getSize(int rowgroup, int column) const {
         const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
-        std::cout << rowgroup << ", " << column << ": " << chunk_metadata.tuple_count<< std::endl;
         uint64_t result =  chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
+        std::cout << "size " << result << " "  << ParquetUtils::writePageWithoutData(result, chunk_metadata.tuple_count).size() << std::endl;
         return result + ParquetUtils::writePageWithoutData(result, chunk_metadata.tuple_count).size();
     }
 public:
@@ -135,10 +135,10 @@ public:
                         directoryReader.GetRecordBatchReader({i}, {j}, &reader);
                         auto batch = reader->Next().ValueOrDie();
                         buffers[{i, j}] = ColumnChunkWriter::writeColumnChunk(
-                            ParquetUtils::writePageWithoutData(uncompressed_size, num_values), batch->column(0));
+                            ParquetUtils::writePageWithoutData(uncompressed_size, num_values), batch->column(0), uncompressed_size);
                     }
                     auto& curr_buffer = buffers[{i, j}];
-                    std::cout << curr_buffer.size() << " vs " << chunkEnd - chunkBegin + 1 << std::endl;
+                    std::cout << i <<", " << j << " " << curr_buffer.size() << " vs " << chunkEnd - chunkBegin + 1 << std::endl;
                     assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
                     assert(begin - chunkBegin >= 0);
                     assert(begin - chunkBegin < curr_buffer.size());
