@@ -39,19 +39,23 @@ class LazilyTransformedFile : public VirtualizedFile {
         return result;
     }
 
-    [[nodiscard]] uint64_t getSize(int rowgroup, int column) const {
+    const btrblocks::ColumnChunkInfo& getChunkInfo(int rowgroup, int column) const {
         int partOffset = metadata->columns[column].part_offset;
-        std::cout << column << " eeee " << partOffset << std::endl;
         int currentChunk = 0;
         while (currentChunk + metadata->parts[partOffset].num_chunks < rowgroup) {
             currentChunk += metadata->parts[partOffset++].num_chunks;
         }
-        std::cout << currentChunk << " aadaa " << partOffset << std::endl;
+
         int inline_chunk = rowgroup - currentChunk;
-        uint64_t result =  metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk].uncompressedSize;
-        std::cout << inline_chunk << " " << &metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk] << " " << rowgroup << ", " << column << ": " << result << std::endl;
+        return metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk];
+    }
+
+    [[nodiscard]] uint64_t getSize(int rowgroup, int column) const {
+        const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
+        std::cout << rowgroup << ", " << column << ": " << chunk_metadata.tuple_count<< std::endl;
+        uint64_t result =  chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
-        return result + ParquetUtils::writePageWithoutData(result, 64000).size();
+        return result + ParquetUtils::writePageWithoutData(result, chunk_metadata.tuple_count).size();
     }
 public:
     explicit LazilyTransformedFile(const std::string& path) :
@@ -65,11 +69,11 @@ public:
         auto builder = parquet::FileMetaDataBuilder::Make(schemaDescriptor.get(), parquetWriterProperties);
 
         int64_t total_bytes = 4;
-        int num_vals = 64000;
         for (int i=0; i!=metadata->num_chunks; i++) {
             int64_t rowgroup_bytes = 0;
             auto* rowGroupBuilder = builder->AppendRowGroup();
-            rowGroupBuilder->set_num_rows(num_vals);
+            uint64_t tuple_count = getChunkInfo(i, 0).tuple_count;
+            rowGroupBuilder->set_num_rows(tuple_count);
             for (int j=0; j!=metadata->num_columns; j++) {
                 auto* columnChunk = rowGroupBuilder->NextColumnChunk();
                 uint64_t uncompressed_size = getSize(i, j);
@@ -79,7 +83,7 @@ public:
                 statistics.set_distinct_count(0);
                 statistics.set_null_count(0);
                 columnChunk->SetStatistics(statistics);
-                columnChunk->Finish(num_vals, -1, -1, total_bytes,
+                columnChunk->Finish(tuple_count, -1, -1, total_bytes,
                     uncompressed_size, uncompressed_size, false, false,
                     {{parquet::Encoding::PLAIN, 0}}, {});
                 total_bytes += uncompressed_size;
@@ -145,7 +149,6 @@ public:
                 }
             }
         }
-        std::cout << result.size() << " vs2 " << byteRange.size() << std::endl;
         return std::string(result.begin(), result.end());
     }
 };
