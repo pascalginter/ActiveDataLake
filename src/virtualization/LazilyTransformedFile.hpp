@@ -16,7 +16,7 @@
 #include "VirtualizedFile.hpp"
 #include "parquet/ParquetUtils.hpp"
 
-std::mutex global_mtx;
+inline std::mutex global_mtx;
 
 class LazilyTransformedFile : public VirtualizedFile {
     size_t requestCounter = 0;
@@ -26,6 +26,7 @@ class LazilyTransformedFile : public VirtualizedFile {
     std::string serializedParquetMetadata;
     std::shared_ptr<arrow::Buffer> buffer;
     size_t size_;
+    size_t metadata_offset;
 
     std::map<std::pair<int, int>, std::vector<uint8_t>> buffers;
 
@@ -39,7 +40,7 @@ class LazilyTransformedFile : public VirtualizedFile {
         return result;
     }
 
-    const btrblocks::ColumnChunkInfo& getChunkInfo(int rowgroup, int column) const {
+    [[nodiscard]] const btrblocks::ColumnChunkInfo& getChunkInfo(const int rowgroup, const int column) const {
         int partOffset = metadata->columns[column].part_offset;
         int currentChunk = 0;
         while (currentChunk + metadata->parts[partOffset].num_chunks < rowgroup) {
@@ -60,7 +61,20 @@ class LazilyTransformedFile : public VirtualizedFile {
 public:
     explicit LazilyTransformedFile(const std::string& path) :
             directoryReader(path), metadata(directoryReader.metadata()) {
-        std::cout << metadata << std::endl;
+
+        for (int column_i=0; column_i!=metadata->num_columns; column_i++) {
+            btrblocks::ColumnInfo& column_info = metadata->columns[column_i];
+            int total_chunks = 0;
+            for (int part_i=0; part_i!=column_info.num_parts; part_i++) {
+                btrblocks::ColumnPartInfo& part_info = metadata->parts[column_info.part_offset + part_i];
+                assert(part_info.num_chunks != 0);
+                total_chunks += part_info.num_chunks;
+            }
+            std::cout << column_i << " has parts " << column_info.num_parts << std::endl;
+            std::cout << column_i << " " << total_chunks << " is but expected" << metadata->num_chunks << std::endl;
+            assert(total_chunks == metadata->num_chunks);
+        }
+
         std::shared_ptr<arrow::Schema> schema;
         std::shared_ptr<parquet::SchemaDescriptor> schemaDescriptor;
         directoryReader.GetSchema(&schema);
@@ -94,6 +108,7 @@ public:
         parquetMetadata = builder->Finish();
         serializedParquetMetadata = parquetMetadata->SerializeToString();
         size_ = calculateSizeFromFileMetadata(metadata) + serializedParquetMetadata.size() + 12;
+        metadata_offset = size_ - 8 - serializedParquetMetadata.size();
     }
 
     size_t size() override {
@@ -101,24 +116,11 @@ public:
     }
 
     std::string getRange(S3InterfaceUtils::ByteRange byteRange) override {
+        std::lock_guard guard(global_mtx);
+        assert(metadata->parts[4].num_chunks == 21);
         std::vector<uint8_t> buffer(byteRange.size());
         requestCounter++;
         std::cout << "range " << byteRange.begin << " " << byteRange.end << " (" << byteRange.size() << ")\n";
-        if (byteRange.begin == size_ - 8) {
-            const int32_t s = serializedParquetMetadata.size();
-            std::string result = "xxxxPAR1";
-            memcpy(result.data(), &s, 4);
-            return result;
-        }
-        if (byteRange.begin == size_ - 8 - serializedParquetMetadata.size()) {
-            std::string result = parquetMetadata->SerializeToString();
-            if (byteRange.end == size_ - 1) {
-                const int32_t s = serializedParquetMetadata.size();
-                result += "xxxxPAR1";
-                memcpy(result.data() + s, &s, 4);
-            }
-            return result;
-        }
 
         std::vector<uint8_t> result;
         for (int i=0; i!=metadata->num_chunks; i++) {
@@ -132,13 +134,16 @@ public:
                     int64_t end = std::min(chunkEnd, byteRange.end);
                     if (!buffers.contains({i, j})) {
                         std::shared_ptr<arrow::RecordBatchReader> reader;
+                        std::cout << i << " " << j << std::endl;
+                        assert(metadata->parts[4].num_chunks == 21 && 1);
                         directoryReader.GetRecordBatchReader({i}, {j}, &reader);
                         auto batch = reader->Next().ValueOrDie();
+                        assert(metadata->parts[4].num_chunks == 21 && 11);
                         buffers[{i, j}] = ColumnChunkWriter::writeColumnChunk(
                             ParquetUtils::writePageWithoutData(uncompressed_size, num_values), batch->column(0), uncompressed_size);
+                        assert(metadata->parts[4].num_chunks == 21 && 2);
                     }
                     auto& curr_buffer = buffers[{i, j}];
-                    std::cout << i <<", " << j << " " << curr_buffer.size() << " vs " << chunkEnd - chunkBegin + 1 << std::endl;
                     assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
                     assert(begin - chunkBegin >= 0);
                     assert(begin - chunkBegin < curr_buffer.size());
@@ -146,9 +151,32 @@ public:
                     assert(end + 1 - chunkBegin <= curr_buffer.size());
                     result.insert(result.end(), curr_buffer.begin() + begin - chunkBegin,
                         curr_buffer.begin() + end + 1 - chunkBegin);
+                    assert(metadata->parts[4].num_chunks == 21 && 3);
+                    std::cout << "yes" << (begin == chunkBegin) << (end == chunkEnd) << std::endl;
+                }else {
+                    std::cout << "no" << std::endl;
                 }
             }
         }
+
+
+        if (byteRange.end >= metadata_offset && byteRange.size() != 8) {
+            std::cout << "footer" << std::endl;
+            auto begin = std::max(metadata_offset, static_cast<unsigned long>(byteRange.begin)) - metadata_offset;
+            auto end = std::min(size_ - 8, static_cast<unsigned long>(byteRange.end + 1)) - metadata_offset;
+            result.insert(result.end(), serializedParquetMetadata.begin() + begin, serializedParquetMetadata.begin() + end);
+        }
+        // TODO allow partial footer requests
+        if (byteRange.end == size_ - 1) {
+            const int32_t s = serializedParquetMetadata.size();
+            std::string footer = "xxxxPAR1";
+            memcpy(footer.data(), &s, 4);
+            result.insert(result.end(), footer.begin(), footer.end());
+        }
+
+        std::cout << result.size() << " vs " << byteRange.size() << std::endl;
+        std::cout << byteRange.end << " of " << size_ << std::endl;
+        assert(result.size() == byteRange.size());
         return std::string(result.begin(), result.end());
     }
 };

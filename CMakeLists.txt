@@ -50,6 +50,10 @@ target_link_libraries(ActiveDataLake PRIVATE
         parquet
         croaring
 )
+
+target_compile_options(ActiveDataLake PRIVATE -fsanitize=address)
+target_link_options(ActiveDataLake PRIVATE -fsanitize=address)
+
 # ---------------------------------------------------------------------------
 # Linting
 # ---------------------------------------------------------------------------

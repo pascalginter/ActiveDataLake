@@ -34,7 +34,6 @@ public:
     static std::vector<uint8_t> writeColumnChunk(const std::vector<uint8_t>& header,
                                                  const std::shared_ptr<arrow::Array>& array,
                                                  uint64_t expected_size) {
-        std::cout << "header_size: " << header.size() << std::endl;
         if (array->type() == arrow::int32()) {
             return writeNumericColumnChunk<int32_t>(header, array);
         }
