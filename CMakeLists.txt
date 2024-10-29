@@ -17,7 +17,7 @@ set(CMAKE_PREFIX_PATH "~/Documents/Universitat/ActiveDataLake/build/vendor/btrbl
 # -------------------------------------------------------------------------------
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -g -O3")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -g")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
@@ -50,9 +50,6 @@ target_link_libraries(ActiveDataLake PRIVATE
         parquet
         croaring
 )
-
-target_compile_options(ActiveDataLake PRIVATE -fsanitize=address)
-target_link_options(ActiveDataLake PRIVATE -fsanitize=address)
 
 # ---------------------------------------------------------------------------
 # Linting

@@ -16,8 +16,7 @@ class ColumnChunkWriter {
         auto* offsets = reinterpret_cast<const int32_t*>(array->data()->buffers[1]->data());
         int32_t dataSize = offsets[array->length()];
         std::vector<uint8_t> result(header.size() + dataSize + array->length() * sizeof(int32_t));
-        std::cout << result.size() << " _vs_ " << expected_size << std::endl;
-        //assert(result.size() == expected_size);
+        assert(result.size() == expected_size);
         memcpy(result.data(), header.data(), header.size());
         int32_t curr_offset = header.size();
         for (int i=0; i!=array->length(); i++) {

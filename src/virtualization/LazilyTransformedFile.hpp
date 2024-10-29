@@ -55,7 +55,6 @@ class LazilyTransformedFile : public VirtualizedFile {
         const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
         uint64_t result =  chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
-        std::cout << "size " << result << " "  << ParquetUtils::writePageWithoutData(result, chunk_metadata.tuple_count).size() << std::endl;
         return result + ParquetUtils::writePageWithoutData(result, chunk_metadata.tuple_count).size();
     }
 public:
@@ -70,8 +69,6 @@ public:
                 assert(part_info.num_chunks != 0);
                 total_chunks += part_info.num_chunks;
             }
-            std::cout << column_i << " has parts " << column_info.num_parts << std::endl;
-            std::cout << column_i << " " << total_chunks << " is but expected" << metadata->num_chunks << std::endl;
             assert(total_chunks == metadata->num_chunks);
         }
 
@@ -120,7 +117,6 @@ public:
         assert(metadata->parts[4].num_chunks == 21);
         std::vector<uint8_t> buffer(byteRange.size());
         requestCounter++;
-        std::cout << "range " << byteRange.begin << " " << byteRange.end << " (" << byteRange.size() << ")\n";
 
         std::vector<uint8_t> result;
         for (int i=0; i!=metadata->num_chunks; i++) {
@@ -134,7 +130,6 @@ public:
                     int64_t end = std::min(chunkEnd, byteRange.end);
                     if (!buffers.contains({i, j})) {
                         std::shared_ptr<arrow::RecordBatchReader> reader;
-                        std::cout << i << " " << j << std::endl;
                         assert(metadata->parts[4].num_chunks == 21 && 1);
                         directoryReader.GetRecordBatchReader({i}, {j}, &reader);
                         auto batch = reader->Next().ValueOrDie();
@@ -152,16 +147,13 @@ public:
                     result.insert(result.end(), curr_buffer.begin() + begin - chunkBegin,
                         curr_buffer.begin() + end + 1 - chunkBegin);
                     assert(metadata->parts[4].num_chunks == 21 && 3);
-                    std::cout << "yes" << (begin == chunkBegin) << (end == chunkEnd) << std::endl;
                 }else {
-                    std::cout << "no" << std::endl;
                 }
             }
         }
 
 
         if (byteRange.end >= metadata_offset && byteRange.size() != 8) {
-            std::cout << "footer" << std::endl;
             auto begin = std::max(metadata_offset, static_cast<unsigned long>(byteRange.begin)) - metadata_offset;
             auto end = std::min(size_ - 8, static_cast<unsigned long>(byteRange.end + 1)) - metadata_offset;
             result.insert(result.end(), serializedParquetMetadata.begin() + begin, serializedParquetMetadata.begin() + end);
@@ -174,10 +166,8 @@ public:
             result.insert(result.end(), footer.begin(), footer.end());
         }
 
-        std::cout << result.size() << " vs " << byteRange.size() << std::endl;
-        std::cout << byteRange.end << " of " << size_ << std::endl;
         assert(result.size() == byteRange.size());
-        return std::string(result.begin(), result.end());
+        return {result.begin(), result.end()};
     }
 };
 
