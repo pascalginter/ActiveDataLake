@@ -12,7 +12,7 @@
 class MemoryBufferedTransformedFile : public VirtualizedFile {
     std::shared_ptr<arrow::Buffer> buffer;
 public:
-    MemoryBufferedTransformedFile(const std::string& path){
+    explicit MemoryBufferedTransformedFile(const std::string& path){
         btrblocks::arrow::DirectoryReader directoryReader(path);
         std::shared_ptr<arrow::Table> table;
         if (!directoryReader.ReadTable(&table).ok()){
