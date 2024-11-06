@@ -16,8 +16,6 @@
 #include "VirtualizedFile.hpp"
 #include "parquet/ParquetUtils.hpp"
 
-inline std::mutex global_mtx;
-
 class LazilyTransformedFile : public VirtualizedFile {
     size_t requestCounter = 0;
     btrblocks::arrow::DirectoryReader directoryReader;
@@ -113,8 +111,6 @@ public:
     }
 
     std::string getRange(S3InterfaceUtils::ByteRange byteRange) override {
-        std::lock_guard guard(global_mtx);
-        assert(metadata->parts[4].num_chunks == 21);
         std::vector<uint8_t> buffer(byteRange.size());
         requestCounter++;
 
@@ -130,13 +126,10 @@ public:
                     int64_t end = std::min(chunkEnd, byteRange.end);
                     if (!buffers.contains({i, j})) {
                         std::shared_ptr<arrow::RecordBatchReader> reader;
-                        assert(metadata->parts[4].num_chunks == 21 && 1);
                         directoryReader.GetRecordBatchReader({i}, {j}, &reader);
                         auto batch = reader->Next().ValueOrDie();
-                        assert(metadata->parts[4].num_chunks == 21 && 11);
                         buffers[{i, j}] = ColumnChunkWriter::writeColumnChunk(
                             ParquetUtils::writePageWithoutData(uncompressed_size, num_values), batch->column(0), uncompressed_size);
-                        assert(metadata->parts[4].num_chunks == 21 && 2);
                     }
                     auto& curr_buffer = buffers[{i, j}];
                     assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
@@ -146,8 +139,6 @@ public:
                     assert(end + 1 - chunkBegin <= curr_buffer.size());
                     result.insert(result.end(), curr_buffer.begin() + begin - chunkBegin,
                         curr_buffer.begin() + end + 1 - chunkBegin);
-                    assert(metadata->parts[4].num_chunks == 21 && 3);
-                }else {
                 }
             }
         }
