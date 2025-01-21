@@ -25,6 +25,8 @@ class LazilyTransformedFile : public VirtualizedFile {
     std::shared_ptr<arrow::Buffer> buffer;
     size_t size_;
     size_t metadata_offset;
+    int combinedChunks_;
+    std::mutex mtx;
 
     std::map<std::pair<int, int>, std::vector<uint8_t>> buffers;
 
@@ -49,15 +51,26 @@ class LazilyTransformedFile : public VirtualizedFile {
         return metadata->chunks[metadata->parts[partOffset].chunk_offset + inline_chunk];
     }
 
+    // TODO deduplicate logic
+    [[nodiscard]] uint64_t getDataSize(int rowgroup, int column) const {
+        return getSize(rowgroup, column);
+        const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
+        uint64_t result =  chunk_metadata.uncompressedSize;
+        if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
+        return result;
+    }
+
     [[nodiscard]] uint64_t getSize(int rowgroup, int column) const {
         const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
         uint64_t result =  chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
         return result + ParquetUtils::writePageWithoutData(result, chunk_metadata.tuple_count).size();
     }
+
+
 public:
-    explicit LazilyTransformedFile(const std::string& path) :
-            directoryReader(path), metadata(directoryReader.metadata()) {
+    explicit LazilyTransformedFile(const std::string& path, int combinedChunks = 1) :
+            directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks) {
 
         for (int column_i=0; column_i!=metadata->num_columns; column_i++) {
             btrblocks::ColumnInfo& column_info = metadata->columns[column_i];
@@ -78,20 +91,20 @@ public:
         auto builder = parquet::FileMetaDataBuilder::Make(schemaDescriptor.get(), parquetWriterProperties);
 
         int64_t total_bytes = 4;
-        for (int i=0; i!=metadata->num_chunks; i++) {
+        for (int i=0; i<metadata->num_chunks; i+=combinedChunks) {
             int64_t rowgroup_bytes = 0;
             auto* rowGroupBuilder = builder->AppendRowGroup();
-            uint64_t tuple_count = getChunkInfo(i, 0).tuple_count;
+            uint64_t tuple_count = 0;
+            for (int chunk=0; chunk!=combinedChunks && i+chunk<metadata->num_chunks; chunk++) {
+                tuple_count += getChunkInfo(i, 0).tuple_count;
+            }
             rowGroupBuilder->set_num_rows(tuple_count);
             for (int j=0; j!=metadata->num_columns; j++) {
                 auto* columnChunk = rowGroupBuilder->NextColumnChunk();
-                uint64_t uncompressed_size = getSize(i, j);
-                parquet::EncodedStatistics statistics;
-                statistics.set_max("");
-                statistics.set_min("");
-                statistics.set_distinct_count(0);
-                statistics.set_null_count(0);
-                columnChunk->SetStatistics(statistics);
+                uint64_t uncompressed_size = 0;
+                for (int chunk = 0; chunk != combinedChunks && i+chunk < metadata->num_chunks; chunk++){
+                    uncompressed_size += getSize(i+chunk, j);
+                }
                 columnChunk->Finish(tuple_count, -1, -1, total_bytes,
                     uncompressed_size, uncompressed_size, false, false,
                     {{parquet::Encoding::PLAIN, 0}}, {});
@@ -111,38 +124,54 @@ public:
     }
 
     std::string getRange(S3InterfaceUtils::ByteRange byteRange) override {
-        std::vector<uint8_t> buffer(byteRange.size());
+        std::lock_guard guard(mtx);
+        assert(byteRange.end <= size_);
         requestCounter++;
 
         std::vector<uint8_t> result;
-        for (int i=0; i!=metadata->num_chunks; i++) {
+        if (byteRange.begin == 0) {
+            result.push_back('P');
+            result.push_back('A');
+            result.push_back('R');
+            result.push_back('1');
+        }
+        result.reserve(byteRange.size());
+        for (int i=0; i<metadata->num_chunks; i+=combinedChunks_) {
+            int rowgroup = i / combinedChunks_;
             for (int j=0; j!=metadata->num_columns; j++) {
-                int64_t uncompressed_size = parquetMetadata->RowGroup(i)->ColumnChunk(j)->total_uncompressed_size();
-                int64_t num_values = parquetMetadata->RowGroup(i)->ColumnChunk(j)->num_values();
-                int64_t chunkBegin = parquetMetadata->RowGroup(i)->ColumnChunk(j)->data_page_offset();
-                int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
-                if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
-                    int64_t begin = std::max(chunkBegin, byteRange.begin);
-                    int64_t end = std::min(chunkEnd, byteRange.end);
-                    if (!buffers.contains({i, j})) {
-                        std::shared_ptr<arrow::RecordBatchReader> reader;
-                        directoryReader.GetRecordBatchReader({i}, {j}, &reader);
-                        auto batch = reader->Next().ValueOrDie();
-                        buffers[{i, j}] = ColumnChunkWriter::writeColumnChunk(
-                            ParquetUtils::writePageWithoutData(uncompressed_size, num_values), batch->column(0), uncompressed_size);
+                int64_t chunkBegin = parquetMetadata->RowGroup(rowgroup)->ColumnChunk(j)->data_page_offset();
+                for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
+                    int chunkI = i + chunk;
+                    int64_t uncompressed_size = getSize(chunkI, j);
+                    int64_t num_values = getChunkInfo(chunkI, j).tuple_count;
+                    int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
+                    if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
+                        std::cout << chunkI << " "<<  j << std::endl;
+                        int64_t begin = std::max(chunkBegin, byteRange.begin);
+                        int64_t end = std::min(chunkEnd, byteRange.end);
+                        //assert(begin == chunkBegin);
+                        //assert(end == chunkEnd);
+                        if (!buffers.contains({chunkI, j})) {
+                            std::shared_ptr<arrow::RecordBatchReader> reader;
+                            directoryReader.GetRecordBatchReader({chunkI}, {j}, &reader);
+                            auto batch = reader->Next().ValueOrDie();
+                            buffers[{chunkI, j}] = ColumnChunkWriter::writeColumnChunk(
+                                ParquetUtils::writePageWithoutData(getDataSize(chunkI, j), num_values), batch->column(0), uncompressed_size);
+                        }
+                        auto& curr_buffer = buffers[{chunkI, j}];
+                        assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
+                        assert(begin - chunkBegin >= 0);
+                        assert(begin - chunkBegin < curr_buffer.size());
+                        assert(end + 1 - chunkBegin >= 0);
+                        assert(end + 1 - chunkBegin <= curr_buffer.size());
+                        result.insert(result.end(), curr_buffer.begin() + begin - chunkBegin,
+                            curr_buffer.begin() + end + 1 - chunkBegin);
                     }
-                    auto& curr_buffer = buffers[{i, j}];
-                    assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
-                    assert(begin - chunkBegin >= 0);
-                    assert(begin - chunkBegin < curr_buffer.size());
-                    assert(end + 1 - chunkBegin >= 0);
-                    assert(end + 1 - chunkBegin <= curr_buffer.size());
-                    result.insert(result.end(), curr_buffer.begin() + begin - chunkBegin,
-                        curr_buffer.begin() + end + 1 - chunkBegin);
+                    // Prepare next chunk
+                    chunkBegin+=uncompressed_size;
                 }
             }
         }
-
 
         if (byteRange.end >= metadata_offset && byteRange.size() != 8) {
             auto begin = std::max(metadata_offset, static_cast<unsigned long>(byteRange.begin)) - metadata_offset;
@@ -156,7 +185,7 @@ public:
             memcpy(footer.data(), &s, 4);
             result.insert(result.end(), footer.begin(), footer.end());
         }
-
+        std::cout << result.size() << " vs " << byteRange.size() << std::endl;
         assert(result.size() == byteRange.size());
         return {result.begin(), result.end()};
     }

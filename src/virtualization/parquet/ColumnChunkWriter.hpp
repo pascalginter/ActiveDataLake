@@ -43,6 +43,7 @@ public:
             return writeStringColumnChunk(header, array, expected_size);
         }
         std::cout << "unknown type for serialization" << std::endl;
+        std::cout << array->type()->ToString() << std::endl;
         exit(1);
     }
 };

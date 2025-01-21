@@ -8,7 +8,6 @@
 #define PLAIN_ENCODING 0x00
 #define RLE_ENCODING 0x03
 
-
 class ParquetUtils {
 public:
     static uint8_t GetVarintSize(uint32_t val) {
@@ -27,10 +26,10 @@ public:
 private:
     static void appendZigZagVarint(std::vector<uint8_t>& v, uint64_t val) {
         do {
-            uint8_t byte = val & 127;
+            uint8_t byte = val & 0x7F;
             val >>= 7;
             if (val != 0) {
-                byte |= 128;
+                byte |= 0x80;
             }
             v.push_back(byte);
         } while (val != 0);
@@ -70,9 +69,6 @@ public:
 
         appendZigZagVarint(result, num_values << 1);
         result.push_back(0x01);
-
-        // for (const int a : result) std::cout << std::hex << a << " ";
-        // std::cout << std::dec << std::endl;
 
         return result;
     }
