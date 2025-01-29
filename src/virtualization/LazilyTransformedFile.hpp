@@ -53,11 +53,10 @@ class LazilyTransformedFile : public VirtualizedFile {
 
     // TODO deduplicate logic
     [[nodiscard]] uint64_t getDataSize(int rowgroup, int column) const {
-        return getSize(rowgroup, column);
         const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
         uint64_t result =  chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
-        return result;
+        return result + 5 + ParquetUtils::GetVarintSize(chunk_metadata.tuple_count << 1);
     }
 
     [[nodiscard]] uint64_t getSize(int rowgroup, int column) const {
@@ -69,7 +68,7 @@ class LazilyTransformedFile : public VirtualizedFile {
 
 
 public:
-    explicit LazilyTransformedFile(const std::string& path, int combinedChunks = 1) :
+    explicit LazilyTransformedFile(const std::string& path, int combinedChunks = 64) :
             directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks) {
 
         for (int column_i=0; column_i!=metadata->num_columns; column_i++) {
@@ -96,7 +95,7 @@ public:
             auto* rowGroupBuilder = builder->AppendRowGroup();
             uint64_t tuple_count = 0;
             for (int chunk=0; chunk!=combinedChunks && i+chunk<metadata->num_chunks; chunk++) {
-                tuple_count += getChunkInfo(i, 0).tuple_count;
+                tuple_count += getChunkInfo(i+chunk, 0).tuple_count;
             }
             rowGroupBuilder->set_num_rows(tuple_count);
             for (int j=0; j!=metadata->num_columns; j++) {
@@ -124,7 +123,6 @@ public:
     }
 
     std::string getRange(S3InterfaceUtils::ByteRange byteRange) override {
-        std::lock_guard guard(mtx);
         assert(byteRange.end <= size_);
         requestCounter++;
 
@@ -146,11 +144,8 @@ public:
                     int64_t num_values = getChunkInfo(chunkI, j).tuple_count;
                     int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
                     if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
-                        std::cout << chunkI << " "<<  j << std::endl;
                         int64_t begin = std::max(chunkBegin, byteRange.begin);
                         int64_t end = std::min(chunkEnd, byteRange.end);
-                        //assert(begin == chunkBegin);
-                        //assert(end == chunkEnd);
                         if (!buffers.contains({chunkI, j})) {
                             std::shared_ptr<arrow::RecordBatchReader> reader;
                             directoryReader.GetRecordBatchReader({chunkI}, {j}, &reader);
@@ -185,7 +180,6 @@ public:
             memcpy(footer.data(), &s, 4);
             result.insert(result.end(), footer.begin(), footer.end());
         }
-        std::cout << result.size() << " vs " << byteRange.size() << std::endl;
         assert(result.size() == byteRange.size());
         return {result.begin(), result.end()};
     }

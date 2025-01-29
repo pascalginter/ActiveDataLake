@@ -10,7 +10,7 @@ ExternalProject_Add(
         btrblocks_src
         PREFIX "vendor/btrblocks"
         GIT_REPOSITORY "https://github.com/pascalginter/btrblocks"
-        GIT_TAG "arrow-support"
+        GIT_TAG "arrow-plain"
         CMAKE_ARGS
         -DBUILD_SHARED_LIBRARY=ON
         UPDATE_COMMAND git pull
