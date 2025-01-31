@@ -99,19 +99,34 @@ public:
             }
             rowGroupBuilder->set_num_rows(tuple_count);
             for (int j=0; j!=metadata->num_columns; j++) {
+                btrblocks::ColumnInfo& column_info = metadata->columns[j];
                 auto* columnChunk = rowGroupBuilder->NextColumnChunk();
                 uint64_t uncompressed_size = 0;
-                uint64_t min = getChunkInfo(i, j).min_value, max = getChunkInfo(i, j).max_value;
+                auto& initial_info = getChunkInfo(i, j);
+                uint64_t min = initial_info.min_value, max = initial_info.max_value;
                 for (int chunk = 0; chunk != combinedChunks && i+chunk < metadata->num_chunks; chunk++){
                     auto& chunk_info = getChunkInfo(i+chunk, j);
                     min = std::min(min, chunk_info.min_value);
                     max = std::max(max, chunk_info.max_value);
                     uncompressed_size += getSize(i+chunk, j);
                 }
+
                 parquet::EncodedStatistics statistics;
-                statistics.set_min(std::string(reinterpret_cast<char*>(&min), 8));
-                statistics.set_max(std::string(reinterpret_cast<char*>(&max), 8));
+                size_t num_bytes;
+                switch (column_info.type) {
+                    case btrblocks::ColumnType::INTEGER:
+                        num_bytes = 4;
+                        break;
+                    case btrblocks::ColumnType::STRING:
+                        num_bytes = 8;
+                        break;
+                    default:
+                        assert(false);
+                }
+                statistics.set_min(std::string(reinterpret_cast<char*>(&min), num_bytes));
+                statistics.set_max(std::string(reinterpret_cast<char*>(&max), num_bytes));
                 columnChunk->SetStatistics(statistics);
+
                 columnChunk->Finish(tuple_count, -1, -1, total_bytes,
                     uncompressed_size, uncompressed_size, false, false,
                     {{parquet::Encoding::PLAIN, 0}}, {});
