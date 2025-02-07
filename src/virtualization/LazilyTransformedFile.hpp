@@ -7,7 +7,8 @@
 #include <parquet/statistics.h>
 #include <parquet/metadata.h>
 #include <parquet/column_writer.h>
-#include <arrow/DirectoryReader.hpp>
+
+#include <btrblocks/arrow/ColumnStreamReader.hpp>
 
 #include <cassert>
 #include <avro/Specific.hh>
@@ -27,8 +28,7 @@ class LazilyTransformedFile : public VirtualizedFile {
     size_t metadata_offset;
     int combinedChunks_;
     std::mutex mtx;
-
-    std::map<std::pair<int, int>, std::vector<uint8_t>> buffers;
+    std::string path;
 
     [[nodiscard]] size_t calculateSizeFromFileMetadata(const btrblocks::FileMetadata* metadata) const {
         size_t result = 0;
@@ -69,7 +69,7 @@ class LazilyTransformedFile : public VirtualizedFile {
 
 public:
     explicit LazilyTransformedFile(const std::string& path, int combinedChunks = 64) :
-            directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks) {
+            directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path) {
 
         for (int column_i=0; column_i!=metadata->num_columns; column_i++) {
             btrblocks::ColumnInfo& column_info = metadata->columns[column_i];
@@ -85,6 +85,9 @@ public:
         std::shared_ptr<arrow::Schema> schema;
         std::shared_ptr<parquet::SchemaDescriptor> schemaDescriptor;
         directoryReader.GetSchema(&schema);
+        std::cout << schema->ToString() << std::endl;
+        std::cout << directoryReader.metadata() << std::endl;
+        std::cout << metadata << std::endl;
         auto parquetWriterProperties = parquet::WriterProperties::Builder().build();
         parquet::arrow::ToParquetSchema(schema.get(), *parquetWriterProperties, *parquet::default_arrow_writer_properties(), &schemaDescriptor);
         auto builder = parquet::FileMetaDataBuilder::Make(schemaDescriptor.get(), parquetWriterProperties);
@@ -150,13 +153,23 @@ public:
         requestCounter++;
 
         std::vector<uint8_t> result;
-        if (byteRange.begin == 0) {
-            result.push_back('P');
-            result.push_back('A');
-            result.push_back('R');
-            result.push_back('1');
-        }
         result.reserve(byteRange.size());
+        result.assign(byteRange.size(), 0);
+        size_t offset = 0;
+        if (byteRange.begin == 0) {
+            result[0] = 'P';
+            result[1] = 'A';
+            result[2] = 'R';
+            result[3] = '1';
+            offset = 4;
+        }
+
+        std::shared_ptr<arrow::Array> arr;
+        std::vector<btrblocks::arrow::ColumnStreamReader> columnReaders;
+        columnReaders.reserve(metadata->num_columns);
+        for (int i=0; i!=metadata->num_columns; i++) {
+            columnReaders.emplace_back(path, metadata, i);
+        }
         for (int i=0; i<metadata->num_chunks; i+=combinedChunks_) {
             int rowgroup = i / combinedChunks_;
             for (int j=0; j!=metadata->num_columns; j++) {
@@ -169,24 +182,22 @@ public:
                     if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
                         int64_t begin = std::max(chunkBegin, byteRange.begin);
                         int64_t end = std::min(chunkEnd, byteRange.end);
-                        if (!buffers.contains({chunkI, j})) {
-                            std::shared_ptr<arrow::RecordBatchReader> reader;
-                            directoryReader.GetRecordBatchReader({chunkI}, {j}, &reader);
-                            auto batch = reader->Next().ValueOrDie();
-                            buffers[{chunkI, j}] = ColumnChunkWriter::writeColumnChunk(
-                                ParquetUtils::writePageWithoutData(getDataSize(chunkI, j), num_values), batch->column(0), uncompressed_size);
-                        }
-                        auto& curr_buffer = buffers[{chunkI, j}];
+
+                        auto status = columnReaders[j].Read(chunkI, &arr);
+                        assert(status.ok());
+                        auto curr_buffer = ColumnChunkWriter::writeColumnChunk(
+                            ParquetUtils::writePageWithoutData(
+                                getDataSize(chunkI, j), num_values), arr, uncompressed_size);
                         assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
                         assert(begin - chunkBegin >= 0);
                         assert(begin - chunkBegin < curr_buffer.size());
                         assert(end + 1 - chunkBegin >= 0);
                         assert(end + 1 - chunkBegin <= curr_buffer.size());
-                        result.insert(result.end(), curr_buffer.begin() + begin - chunkBegin,
-                            curr_buffer.begin() + end + 1 - chunkBegin);
+                        memcpy(result.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
+                        offset += end - begin + 1;
                     }
                     // Prepare next chunk
-                    chunkBegin+=uncompressed_size;
+                    chunkBegin += uncompressed_size;
                 }
             }
         }
@@ -194,14 +205,15 @@ public:
         if (byteRange.end >= metadata_offset && byteRange.size() != 8) {
             auto begin = std::max(metadata_offset, static_cast<unsigned long>(byteRange.begin)) - metadata_offset;
             auto end = std::min(size_ - 8, static_cast<unsigned long>(byteRange.end + 1)) - metadata_offset;
-            result.insert(result.end(), serializedParquetMetadata.begin() + begin, serializedParquetMetadata.begin() + end);
+            memcpy(result.data() + offset, serializedParquetMetadata.data(), serializedParquetMetadata.size());
+            offset += serializedParquetMetadata.size();
         }
         // TODO allow partial footer requests
         if (byteRange.end == size_ - 1) {
             const int32_t s = serializedParquetMetadata.size();
             std::string footer = "xxxxPAR1";
             memcpy(footer.data(), &s, 4);
-            result.insert(result.end(), footer.begin(), footer.end());
+            memcpy(result.data() + offset, footer.data(), footer.size());
         }
         std::cout << byteRange.begin << " " <<  byteRange.end << " of " << size_ << std::endl;
         std::cout << result.size() << " " << byteRange.size() << std::endl;

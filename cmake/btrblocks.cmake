@@ -13,6 +13,7 @@ ExternalProject_Add(
         GIT_TAG "arrow-plain"
         CMAKE_ARGS
         -DBUILD_SHARED_LIBRARY=ON
+        -DCMAKE_BUILD_TYPE=Release
         UPDATE_COMMAND git pull
 )
 
