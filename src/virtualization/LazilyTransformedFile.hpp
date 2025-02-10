@@ -11,6 +11,7 @@
 #include <btrblocks/arrow/ColumnStreamReader.hpp>
 
 #include <cassert>
+#include <chrono>
 #include <avro/Specific.hh>
 
 #include "parquet/ColumnChunkWriter.hpp"
@@ -23,7 +24,10 @@ class LazilyTransformedFile : public VirtualizedFile {
     const btrblocks::FileMetadata* metadata;
     std::unique_ptr<parquet::FileMetaData> parquetMetadata;
     std::string serializedParquetMetadata;
-    std::shared_ptr<arrow::Buffer> buffer;
+    std::array<uint8_t, 1024 * 1024 * 256> buffer;
+    std::vector<uint8_t> curr_buffer;
+    std::vector<btrblocks::arrow::ColumnStreamReader> columnReaders;
+    std::string result;
     size_t size_;
     size_t metadata_offset;
     int combinedChunks_;
@@ -66,11 +70,10 @@ class LazilyTransformedFile : public VirtualizedFile {
         return result + ParquetUtils::writePageWithoutData(result, chunk_metadata.tuple_count).size();
     }
 
-
 public:
-    explicit LazilyTransformedFile(const std::string& path, int combinedChunks = 64) :
+    explicit LazilyTransformedFile(const std::string& path, int combinedChunks = 32) :
             directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path) {
-
+        std::cout << "construct file" << std::endl;
         for (int column_i=0; column_i!=metadata->num_columns; column_i++) {
             btrblocks::ColumnInfo& column_info = metadata->columns[column_i];
             int total_chunks = 0;
@@ -85,9 +88,6 @@ public:
         std::shared_ptr<arrow::Schema> schema;
         std::shared_ptr<parquet::SchemaDescriptor> schemaDescriptor;
         directoryReader.GetSchema(&schema);
-        std::cout << schema->ToString() << std::endl;
-        std::cout << directoryReader.metadata() << std::endl;
-        std::cout << metadata << std::endl;
         auto parquetWriterProperties = parquet::WriterProperties::Builder().build();
         parquet::arrow::ToParquetSchema(schema.get(), *parquetWriterProperties, *parquet::default_arrow_writer_properties(), &schemaDescriptor);
         auto builder = parquet::FileMetaDataBuilder::Make(schemaDescriptor.get(), parquetWriterProperties);
@@ -148,19 +148,18 @@ public:
         return size_;
     }
 
-    std::string getRange(S3InterfaceUtils::ByteRange byteRange) override {
+    std::string& getRange(S3InterfaceUtils::ByteRange byteRange) override {
         assert(byteRange.end <= size_);
+        assert(buffer.size() > byteRange.size());
         requestCounter++;
+        auto t1 = std::chrono::high_resolution_clock::now();
 
-        std::vector<uint8_t> result;
-        result.reserve(byteRange.size());
-        result.assign(byteRange.size(), 0);
         size_t offset = 0;
         if (byteRange.begin == 0) {
-            result[0] = 'P';
-            result[1] = 'A';
-            result[2] = 'R';
-            result[3] = '1';
+            buffer[0] = 'P';
+            buffer[1] = 'A';
+            buffer[2] = 'R';
+            buffer[3] = '1';
             offset = 4;
         }
 
@@ -185,15 +184,18 @@ public:
 
                         auto status = columnReaders[j].Read(chunkI, &arr);
                         assert(status.ok());
-                        auto curr_buffer = ColumnChunkWriter::writeColumnChunk(
-                            ParquetUtils::writePageWithoutData(
-                                getDataSize(chunkI, j), num_values), arr, uncompressed_size);
-                        assert(curr_buffer.size() == chunkEnd - chunkBegin + 1);
+                        if (curr_buffer.size() < uncompressed_size) {
+                            curr_buffer.resize(uncompressed_size);
+                        }
+                        ColumnChunkWriter::writeColumnChunk(
+                            ParquetUtils::writePageWithoutData(getDataSize(chunkI, j), num_values),
+                            arr, curr_buffer);
                         assert(begin - chunkBegin >= 0);
                         assert(begin - chunkBegin < curr_buffer.size());
                         assert(end + 1 - chunkBegin >= 0);
                         assert(end + 1 - chunkBegin <= curr_buffer.size());
-                        memcpy(result.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
+                        assert(offset + end - begin + 1 < buffer.size());
+                        memcpy(buffer.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
                         offset += end - begin + 1;
                     }
                     // Prepare next chunk
@@ -205,7 +207,7 @@ public:
         if (byteRange.end >= metadata_offset && byteRange.size() != 8) {
             auto begin = std::max(metadata_offset, static_cast<unsigned long>(byteRange.begin)) - metadata_offset;
             auto end = std::min(size_ - 8, static_cast<unsigned long>(byteRange.end + 1)) - metadata_offset;
-            memcpy(result.data() + offset, serializedParquetMetadata.data(), serializedParquetMetadata.size());
+            memcpy(buffer.data() + offset, serializedParquetMetadata.data(), serializedParquetMetadata.size());
             offset += serializedParquetMetadata.size();
         }
         // TODO allow partial footer requests
@@ -213,12 +215,14 @@ public:
             const int32_t s = serializedParquetMetadata.size();
             std::string footer = "xxxxPAR1";
             memcpy(footer.data(), &s, 4);
-            memcpy(result.data() + offset, footer.data(), footer.size());
+            memcpy(buffer.data() + offset, footer.data(), footer.size());
+            offset += footer.size();
         }
-        std::cout << byteRange.begin << " " <<  byteRange.end << " of " << size_ << std::endl;
-        std::cout << result.size() << " " << byteRange.size() << std::endl;
-        assert(result.size() == byteRange.size());
-        return {result.begin(), result.end()};
+        result = std::string(reinterpret_cast<char*>(buffer.data()), offset);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        std::cout << "latency: " << duration_cast<std::chrono::milliseconds>(t2 - t1).count() << std::endl;
+
+        return result;
     }
 };
 

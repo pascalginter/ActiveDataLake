@@ -22,5 +22,4 @@ std::shared_ptr<VirtualizedFile> VirtualizedFile::createFileAbstraction(std::str
     }
     std::cout << "file not found " << tableName << std::endl;
     return nullptr;
-
 }

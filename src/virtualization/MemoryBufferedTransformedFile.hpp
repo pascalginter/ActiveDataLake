@@ -11,6 +11,7 @@
 
 class MemoryBufferedTransformedFile : public VirtualizedFile {
     std::shared_ptr<arrow::Buffer> buffer;
+    std::string result;
 public:
     explicit MemoryBufferedTransformedFile(const std::string& path){
         btrblocks::arrow::DirectoryReader directoryReader(path);
@@ -30,8 +31,9 @@ public:
         return buffer->size();
     }
 
-    std::string getRange(S3InterfaceUtils::ByteRange byteRange) override {
-        return std::string{reinterpret_cast<char*>(buffer->mutable_data()) + byteRange.begin, byteRange.size()};
+    std::string& getRange(S3InterfaceUtils::ByteRange byteRange) override {
+        result = std::string{reinterpret_cast<char*>(buffer->mutable_data()) + byteRange.begin, static_cast<size_t>(byteRange.size())};
+        return result;
     }
 };
 

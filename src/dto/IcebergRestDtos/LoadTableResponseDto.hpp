@@ -11,7 +11,7 @@
 class LoadTableResponseDto : public oatpp::DTO {
     DTO_INIT(LoadTableResponseDto, DTO)
 
-    DTO_FIELD(String, metadataLocation, "metadata-location") = "http://localhost:8000/data/lineitem.parquet";
+    DTO_FIELD(String, metadataLocation, "metadata-location") = "http://localhost:8000/metadata/metadata.json";
     DTO_FIELD(Object<IcebergMetadataDto>, metadata, "metadata") = IcebergMetadataDto::createShared();
     DTO_FIELD(Fields<Any>, config, "config") = {};
 };
