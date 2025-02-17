@@ -10,18 +10,21 @@ class ColumnChunkWriter {
     }
 
     static void writeStringColumnChunk(const std::vector<uint8_t>& header,
-                                                       const std::shared_ptr<arrow::Array>& array,
-                                                       std::vector<uint8_t>& vec) {
+                                       const std::shared_ptr<arrow::Array>& array,
+                                       std::vector<uint8_t>& vec) {
+        const uint8_t* src = array->data()->buffers[2]->data();
         auto* offsets = reinterpret_cast<const int32_t*>(array->data()->buffers[1]->data());
         memcpy(vec.data(), header.data(), header.size());
         int32_t curr_offset = header.size();
-        for (int i=0; i!=array->length(); i++) {
+        const int64_t n = array->length();
+        for (int64_t i=0; i!=n; i++) {
             int32_t length = offsets[i+1] - offsets[i];
             memcpy(vec.data() + curr_offset, &length, sizeof(int32_t));
             curr_offset += 4;
-            memcpy(vec.data() + curr_offset, array->data()->buffers[2]->data() + offsets[i], length);
+            memcpy(vec.data() + curr_offset, src + offsets[i], length);
             curr_offset += length;
-        }}
+        }
+    }
 public:
     static void writeColumnChunk(const std::vector<uint8_t>& header,
                                                  const std::shared_ptr<arrow::Array>& array,

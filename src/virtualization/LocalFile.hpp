@@ -7,8 +7,7 @@ thread_local std::ifstream file;
 
 class LocalFile : public VirtualizedFile {
     std::filesystem::path path;
-    std::vector<char> buffer;
-    std::string result;
+    static thread_local std::shared_ptr<std::string> result;
 public:
     explicit LocalFile(const std::string& p) : path(p){
         std::cout << "created local file" << std::endl;
@@ -18,14 +17,11 @@ public:
         return std::filesystem::file_size(path);
     }
 
-    std::string& getRange(S3InterfaceUtils::ByteRange byteRange) override {
+    std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
+        result->resize(byteRange.size());
         if (!file.is_open()) file.open(path);
         file.seekg(byteRange.begin);
-        if (byteRange.size() > buffer.size()) {
-            buffer.resize(byteRange.size());
-        }
-        file.read(buffer.data(), byteRange.size());
-        result = {buffer.data(), static_cast<size_t>(byteRange.size())};
+        file.read(result->data(), byteRange.size());
         return result;
     }
 };

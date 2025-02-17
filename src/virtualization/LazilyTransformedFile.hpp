@@ -7,12 +7,15 @@
 #include <parquet/statistics.h>
 #include <parquet/metadata.h>
 #include <parquet/column_writer.h>
+#include <thread>
 
 #include <btrblocks/arrow/ColumnStreamReader.hpp>
 
 #include <cassert>
 #include <chrono>
 #include <avro/Specific.hh>
+
+#include "../util/parallel.hpp"
 
 #include "parquet/ColumnChunkWriter.hpp"
 #include "VirtualizedFile.hpp"
@@ -24,10 +27,9 @@ class LazilyTransformedFile : public VirtualizedFile {
     const btrblocks::FileMetadata* metadata;
     std::unique_ptr<parquet::FileMetaData> parquetMetadata;
     std::string serializedParquetMetadata;
-    std::array<uint8_t, 1024 * 1024 * 256> buffer;
-    std::vector<uint8_t> curr_buffer;
-    std::vector<btrblocks::arrow::ColumnStreamReader> columnReaders;
-    std::string result;
+    static thread_local std::string buffer;
+    static thread_local std::vector<uint8_t> curr_buffer;
+    hpqp::enumerable_thread_specific<std::vector<btrblocks::arrow::ColumnStreamReader>> columnReaders;
     size_t size_;
     size_t metadata_offset;
     int combinedChunks_;
@@ -71,9 +73,20 @@ class LazilyTransformedFile : public VirtualizedFile {
     }
 
 public:
-    explicit LazilyTransformedFile(const std::string& path, int combinedChunks = 32) :
-            directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path) {
+    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 16) :
+            directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path),
+            columnReaders([path, this]() {
+                std::cout << "allocate for " << std::this_thread::get_id() << std::endl;
+                std::vector<btrblocks::arrow::ColumnStreamReader> localReaders;
+                localReaders.reserve(metadata->num_columns);
+                for (int i=0; i!=metadata->num_columns; i++) {
+                   localReaders.emplace_back(path, metadata, i);
+                }
+                assert(localReaders.size() == metadata->num_columns);
+                return localReaders;
+            }){
         std::cout << "construct file" << std::endl;
+        std::cout << "file has b" << metadata->num_chunks << " chunks" << std::endl;
         for (int column_i=0; column_i!=metadata->num_columns; column_i++) {
             btrblocks::ColumnInfo& column_info = metadata->columns[column_i];
             int total_chunks = 0;
@@ -142,16 +155,18 @@ public:
         serializedParquetMetadata = parquetMetadata->SerializeToString();
         size_ = calculateSizeFromFileMetadata(metadata) + serializedParquetMetadata.size() + 12;
         metadata_offset = size_ - 8 - serializedParquetMetadata.size();
+        buffer.reserve(1024 * 1024 * 256);
     }
 
     size_t size() override {
         return size_;
     }
 
-    std::string& getRange(S3InterfaceUtils::ByteRange byteRange) override {
+    std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
         assert(byteRange.end <= size_);
-        assert(buffer.size() > byteRange.size());
+        buffer.resize(byteRange.size());
         requestCounter++;
+        std::cout << std::this_thread::get_id() << std::endl;
         auto t1 = std::chrono::high_resolution_clock::now();
 
         size_t offset = 0;
@@ -162,13 +177,10 @@ public:
             buffer[3] = '1';
             offset = 4;
         }
-
+        auto& localReaders = columnReaders.local();
+        std::cout << localReaders.size() << " for " << std::this_thread::get_id() << std::endl;
+        assert(localReaders.size() == metadata->num_columns);
         std::shared_ptr<arrow::Array> arr;
-        std::vector<btrblocks::arrow::ColumnStreamReader> columnReaders;
-        columnReaders.reserve(metadata->num_columns);
-        for (int i=0; i!=metadata->num_columns; i++) {
-            columnReaders.emplace_back(path, metadata, i);
-        }
         for (int i=0; i<metadata->num_chunks; i+=combinedChunks_) {
             int rowgroup = i / combinedChunks_;
             for (int j=0; j!=metadata->num_columns; j++) {
@@ -182,7 +194,7 @@ public:
                         int64_t begin = std::max(chunkBegin, byteRange.begin);
                         int64_t end = std::min(chunkEnd, byteRange.end);
 
-                        auto status = columnReaders[j].Read(chunkI, &arr);
+                        auto status = localReaders[j].Read(chunkI, &arr);
                         assert(status.ok());
                         if (curr_buffer.size() < uncompressed_size) {
                             curr_buffer.resize(uncompressed_size);
@@ -194,7 +206,7 @@ public:
                         assert(begin - chunkBegin < curr_buffer.size());
                         assert(end + 1 - chunkBegin >= 0);
                         assert(end + 1 - chunkBegin <= curr_buffer.size());
-                        assert(offset + end - begin + 1 < buffer.size());
+                        assert(offset + end - begin + 1 <= buffer.size());
                         memcpy(buffer.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
                         offset += end - begin + 1;
                     }
@@ -218,11 +230,10 @@ public:
             memcpy(buffer.data() + offset, footer.data(), footer.size());
             offset += footer.size();
         }
-        result = std::string(reinterpret_cast<char*>(buffer.data()), offset);
         auto t2 = std::chrono::high_resolution_clock::now();
         std::cout << "latency: " << duration_cast<std::chrono::milliseconds>(t2 - t1).count() << std::endl;
-
-        return result;
+        std::shared_ptr<std::string> b(&buffer, [](std::string*){});
+        return b;
     }
 };
 

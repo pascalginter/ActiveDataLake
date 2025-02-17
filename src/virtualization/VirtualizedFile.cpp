@@ -23,3 +23,8 @@ std::shared_ptr<VirtualizedFile> VirtualizedFile::createFileAbstraction(std::str
     std::cout << "file not found " << tableName << std::endl;
     return nullptr;
 }
+
+thread_local std::string LazilyTransformedFile::buffer = "";
+thread_local std::vector<uint8_t> LazilyTransformedFile::curr_buffer = {};
+
+thread_local std::shared_ptr<std::string> LocalFile::result = std::make_shared<std::string>();
