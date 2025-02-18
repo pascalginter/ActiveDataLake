@@ -23,6 +23,7 @@ class ColumnChunkWriter {
             curr_offset += 4;
             memcpy(vec.data() + curr_offset, src + offsets[i], length);
             curr_offset += length;
+            assert(vec.size() >= curr_offset);
         }
     }
 public:

@@ -64,7 +64,7 @@ public:
         result.push_back(END_STRUCT);
 
         // Write length of rle run
-        result.push_back((GetVarintSize(num_values) + 1));
+        result.push_back((GetVarintSize(num_values << 1) + 1));
         for (int i=0; i!=3; i++) result.push_back(0x00);
 
         appendZigZagVarint(result, num_values << 1);

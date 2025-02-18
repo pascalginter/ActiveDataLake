@@ -69,14 +69,13 @@ class LazilyTransformedFile : public VirtualizedFile {
         const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
         uint64_t result =  chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
-        return result + ParquetUtils::writePageWithoutData(result, chunk_metadata.tuple_count).size();
+        return result + ParquetUtils::writePageWithoutData(getDataSize(rowgroup, column), chunk_metadata.tuple_count).size();
     }
 
 public:
     explicit LazilyTransformedFile(const std::string path, int combinedChunks = 16) :
             directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path),
             columnReaders([path, this]() {
-                std::cout << "allocate for " << std::this_thread::get_id() << std::endl;
                 std::vector<btrblocks::arrow::ColumnStreamReader> localReaders;
                 localReaders.reserve(metadata->num_columns);
                 for (int i=0; i!=metadata->num_columns; i++) {
@@ -155,7 +154,6 @@ public:
         serializedParquetMetadata = parquetMetadata->SerializeToString();
         size_ = calculateSizeFromFileMetadata(metadata) + serializedParquetMetadata.size() + 12;
         metadata_offset = size_ - 8 - serializedParquetMetadata.size();
-        buffer.reserve(1024 * 1024 * 256);
     }
 
     size_t size() override {
@@ -165,10 +163,6 @@ public:
     std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
         assert(byteRange.end <= size_);
         buffer.resize(byteRange.size());
-        requestCounter++;
-        std::cout << std::this_thread::get_id() << std::endl;
-        auto t1 = std::chrono::high_resolution_clock::now();
-
         size_t offset = 0;
         if (byteRange.begin == 0) {
             buffer[0] = 'P';
@@ -178,7 +172,6 @@ public:
             offset = 4;
         }
         auto& localReaders = columnReaders.local();
-        std::cout << localReaders.size() << " for " << std::this_thread::get_id() << std::endl;
         assert(localReaders.size() == metadata->num_columns);
         std::shared_ptr<arrow::Array> arr;
         for (int i=0; i<metadata->num_chunks; i+=combinedChunks_) {
@@ -191,14 +184,17 @@ public:
                     int64_t num_values = getChunkInfo(chunkI, j).tuple_count;
                     int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
                     if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
+
                         int64_t begin = std::max(chunkBegin, byteRange.begin);
                         int64_t end = std::min(chunkEnd, byteRange.end);
+                        // should not be needed, but warns if a reader does something unexpected
+                        assert(begin == chunkBegin);
+                        assert(end == chunkEnd);
 
                         auto status = localReaders[j].Read(chunkI, &arr);
                         assert(status.ok());
-                        if (curr_buffer.size() < uncompressed_size) {
-                            curr_buffer.resize(uncompressed_size);
-                        }
+                        curr_buffer.resize(uncompressed_size);
+
                         ColumnChunkWriter::writeColumnChunk(
                             ParquetUtils::writePageWithoutData(getDataSize(chunkI, j), num_values),
                             arr, curr_buffer);
@@ -208,6 +204,7 @@ public:
                         assert(end + 1 - chunkBegin <= curr_buffer.size());
                         assert(offset + end - begin + 1 <= buffer.size());
                         memcpy(buffer.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
+                        assert(curr_buffer.size() >= end - begin + 1);
                         offset += end - begin + 1;
                     }
                     // Prepare next chunk
@@ -231,7 +228,6 @@ public:
             offset += footer.size();
         }
         auto t2 = std::chrono::high_resolution_clock::now();
-        std::cout << "latency: " << duration_cast<std::chrono::milliseconds>(t2 - t1).count() << std::endl;
         std::shared_ptr<std::string> b(&buffer, [](std::string*){});
         return b;
     }

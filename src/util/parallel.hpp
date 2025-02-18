@@ -89,14 +89,11 @@ class enumerable_thread_specific {
     auto it = std::find(threads.begin(), threads.end(), thread_id);
     size_t pos = std::distance(threads.begin(), it);
     if (it == threads.end()) {
-      std::cout << "no match" << std::endl;
+      assert(thread_specifics.size() < std::thread::hardware_concurrency());
       threads.push_back(thread_id);
       thread_specifics.push_back(constructor());
       pos = thread_specifics.size() - 1;
-    }else {
-      std::cout << "match" << std::endl;
     }
-    std::cout << thread_specifics[pos].size() << std::endl;
     return thread_specifics[pos];
   }
 
