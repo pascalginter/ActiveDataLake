@@ -23,7 +23,6 @@
 #include "oatpp/json/Serializer.hpp"
 
 #include "../../virtualization/VirtualizedFile.hpp"
-#include "../S3InterfaceUtils.hpp"
 
 class DataController : public oatpp::web::server::api::ApiController {
 public:

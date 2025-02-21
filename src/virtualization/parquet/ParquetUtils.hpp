@@ -38,6 +38,7 @@ public:
     static std::vector<uint8_t> writePageWithoutData(uint64_t uncompressed_size, uint64_t num_values){
         // Declare data page
         std::vector<uint8_t> result{NEXT_INTEGER_FIELD, DATA_PAGE_V1};
+        result.reserve(40);
         // Write uncompressed size
         result.push_back(NEXT_INTEGER_FIELD);
         appendZigZagVarint(result, GetZigZag(uncompressed_size));

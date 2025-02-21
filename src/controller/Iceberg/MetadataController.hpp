@@ -30,7 +30,6 @@
 
 #include "oatpp/json/Serializer.hpp"
 
-#include "../S3InterfaceUtils.hpp"
 #include "../../dto/IcebergMetadataDto.hpp"
 
 class IcebergMetadataController : public oatpp::web::server::api::ApiController {
@@ -54,7 +53,7 @@ public:
 
         avro::compileJsonSchema(in, schema);
         manifest_file manifest;
-        manifest.manifest_path = "http://localhost:8000/manifest-file/1.avro";
+        manifest.manifest_path = "http://localhost:8000/manifest-file/file.avro";
         manifest.manifest_length = 1000;
         manifest.partition_spec_id = 0;
         manifest.content = 0;
@@ -137,6 +136,7 @@ public:
     ENDPOINT("HEAD", "/manifest-file/{fileName}", headManifestFile,
              PATH(String, fileName)){
         assert(fileName->ends_with(".avro"));
+        std::cout << "head manifest-file" << std::endl;
         prepareManifestFile();
         return respondWithBufferSize();
     }

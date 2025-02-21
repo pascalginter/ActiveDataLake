@@ -15,7 +15,7 @@ class IcebergSnapshotDto : public oatpp::DTO {
     DTO_FIELD(Int32, sequenceNumber, "sequence-number") = 0;
     DTO_FIELD(Int64, timestampMs, "timestamp-ms") = 0l;
     DTO_FIELD(Object<IcebergSnapshotSummaryDto>, summary, "summary") = IcebergSnapshotSummaryDto::createShared();
-    DTO_FIELD(String, manifestList, "manifest-list") = "http://localhost:8000/manifest-list/0.avro";
+    DTO_FIELD(String, manifestList, "manifest-list") = "http://localhost:8000/manifest-list/list.avro";
     DTO_FIELD(Int32, schemaId, "schema-id") = 0;
 };
 
