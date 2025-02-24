@@ -9,12 +9,12 @@
 class PrefetchFile : public VirtualizedFile {
     std::string key;
     std::atomic<int> outstandingRequests = 0;
-    constexpr const static std::string bucket = "adl-tpch";
-    constexpr const static size_t increment = 16 * (1 << 20);
+    constexpr static std::string bucket = "adl-tpch";
+    constexpr static size_t increment = 16 * (1 << 20);
     static std::shared_ptr<std::string> result;
     static thread_local Aws::S3Crt::S3CrtClient client;
 public:
-    explicit PrefetchFile(const std::string& p) : key(p){
+    explicit PrefetchFile(const std::string& p) : key(p + ".parquet"){
         std::cout << "created remote file" << std::endl;
     }
 
