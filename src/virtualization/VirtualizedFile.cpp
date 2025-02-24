@@ -7,7 +7,7 @@
 #include "PrefetchFile.hpp"
 
 #define LAZY_COMPUTATION true
-#define PREFETCH false
+#define PREFETCH true
 
 std::shared_ptr<VirtualizedFile> VirtualizedFile::createFileAbstraction(std::string tableName) {
     std::string localPathPrefix = "../data/";
@@ -41,3 +41,4 @@ thread_local std::shared_ptr<std::string> RemoteFile::result = std::make_shared<
 thread_local Aws::S3::S3Client RemoteFile::client = {};
 
 thread_local Aws::S3Crt::S3CrtClient PrefetchFile::client = {};
+std::shared_ptr<std::string> PrefetchFile::result = std::make_shared<std::string>("");

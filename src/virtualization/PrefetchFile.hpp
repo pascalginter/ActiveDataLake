@@ -22,23 +22,22 @@ public:
         Aws::S3Crt::Model::HeadObjectRequest request;
         request.SetBucket(bucket);
         request.SetKey(key);
-        size_t size = client.HeadObject(request).GetResult().GetContentLength();
+        const size_t size = client.HeadObject(request).GetResult().GetContentLength();
         result->resize(size);
         for (size_t i = 0; i<size; i+= increment){
            Aws::S3Crt::Model::GetObjectRequest getRequest;
            getRequest.SetBucket(bucket);
            getRequest.SetKey(key);
-           getRequest.SetRange(S3InterfaceUtils::ByteRange(i, std::min(size-1, i+increment)).toRangeString());
+           const size_t end = std::min(size-1, i+increment);
+           const size_t s = end - i + 1;
+           getRequest.SetRange(S3InterfaceUtils::ByteRange(i, end).toRangeString());
            outstandingRequests += 1;
-           client.GetObjectAsync(getRequest, [this, i](
+           client.GetObjectAsync(getRequest, [this, i, s](
                    const Aws::S3Crt::S3CrtClient*,
-                   const Aws::S3Crt::Model::GetObjectRequest& request,
+                   const Aws::S3Crt::Model::GetObjectRequest&,
                    Aws::S3Crt::Model::GetObjectOutcome outcome,
                    const std::shared_ptr<const Aws::Client::AsyncCallerContext>&) {
-                       std::stringstream ss;
-                       ss << outcome.GetResult().GetBody().rdbuf();
-                       std::string res = ss.str();
-                       for (size_t j=0; j!=res.size(); j++) (*result)[i + j] = res[j];
+                       outcome.GetResult().GetBody().read(result->data() + i, s);
                        outstandingRequests -= 1;
            });
         }
@@ -47,7 +46,7 @@ public:
 
     std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
         outstandingRequests.wait(0);
-        std::shared_ptr<std::string> res;
+        auto res = std::make_shared<std::string>("");
         res->resize(byteRange.size());
         memcpy(res->data(), result->data() + byteRange.begin, byteRange.size());
         return res;
