@@ -10,6 +10,7 @@ public:
         int64_t end;
 
         [[nodiscard]] int64_t size() const { return end - begin + 1; };
+        [[nodiscard]] std::string toRangeString() const { return "bytes=" + std::to_string(begin) + "-" + std::to_string(end);}
     };
 
     static ByteRange extractRange(

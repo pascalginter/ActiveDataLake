@@ -33,6 +33,7 @@ include("cmake/clang-tidy.cmake") # Integrate clang-tidy
 # ---------------------------------------------------------------------------
 
 include(cmake/avro.cmake)
+include(cmake/aws.cmake)
 include(cmake/arrow.cmake)
 include(cmake/btrblocks.cmake)
 include(cmake/croaring.cmake)
@@ -49,6 +50,9 @@ target_link_libraries(ActiveDataLake PRIVATE
         avro
         parquet
         croaring
+        libaws-cpp-sdk-core
+        libaws-cpp-sdk-s3-crt
+        libaws-cpp-sdk-s3
 )
 
 # ---------------------------------------------------------------------------
