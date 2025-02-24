@@ -9,6 +9,7 @@
 #include <btrblocks/scheme/SchemePool.hpp>
 
 #include <iostream>
+#include <aws/core/Aws.h>
 
 void run() {
     AppComponent components; // Create scope Environment components
@@ -40,6 +41,10 @@ void run() {
  */
 int main(int argc, const char * argv[]) {
 
+    Aws::SDKOptions options;
+    options.httpOptions.installSigPipeHandler = true;
+    Aws::InitAPI(options);
+
     btrblocks::SchemePool::refresh();
 
     oatpp::Environment::init();
@@ -53,6 +58,7 @@ int main(int argc, const char * argv[]) {
     std::cout << "objectsCreated = " << oatpp::Environment::getObjectsCreated() << "\n\n";
 
     oatpp::Environment::destroy();
+    Aws::ShutdownAPI(options);
 
     return 0;
 }

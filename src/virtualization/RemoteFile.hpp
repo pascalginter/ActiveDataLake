@@ -25,13 +25,20 @@ public:
     }
 
     std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
+        std::cout << byteRange.begin << " " << byteRange.end << std::endl;
         Aws::S3::Model::GetObjectRequest request;
         request.SetBucket(bucket);
         request.SetKey(key);
         request.SetRange(byteRange.toRangeString());
-        std::stringstream ss;
-        ss << client.GetObject(request).GetResult().GetBody().rdbuf();
-        *result = ss.str();
-        return result;
+        if (const auto outcome = client.GetObject(request); outcome.IsSuccess()) {
+            std::stringstream ss;
+            ss << client.GetObject(request).GetResult().GetBody().rdbuf();
+            *result = ss.str();
+            return result;
+        } else {
+            std::cout << outcome.GetError().GetMessage().c_str() << std::endl;
+            exit(1);
+        }
+
     }
 };
