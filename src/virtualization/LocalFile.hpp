@@ -3,9 +3,9 @@
 #include <vector>
 #include "VirtualizedFile.hpp"
 
-thread_local std::ifstream file;
+inline thread_local std::ifstream file;
 
-class LocalFile : public VirtualizedFile {
+class LocalFile final : public VirtualizedFile {
     std::filesystem::path path;
     static thread_local std::shared_ptr<std::string> result;
 public:

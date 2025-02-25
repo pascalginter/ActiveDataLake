@@ -9,7 +9,7 @@
 
 #include "VirtualizedFile.hpp"
 
-class MemoryBufferedTransformedFile : public VirtualizedFile {
+class MemoryBufferedTransformedFile final : public VirtualizedFile {
     std::shared_ptr<arrow::Buffer> buffer;
 public:
     explicit MemoryBufferedTransformedFile(const std::string& path){
@@ -20,7 +20,7 @@ public:
             exit(1);
         }
 
-        auto out = arrow::io::BufferOutputStream::Create().ValueOrDie();
+        const auto out = arrow::io::BufferOutputStream::Create().ValueOrDie();
         PARQUET_THROW_NOT_OK(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), out));
         buffer = out->Finish().ValueOrDie();
     }

@@ -21,7 +21,7 @@
 #include "VirtualizedFile.hpp"
 #include "parquet/ParquetUtils.hpp"
 
-class LazilyTransformedFile : public VirtualizedFile {
+class LazilyTransformedFile final : public VirtualizedFile {
     size_t requestCounter = 0;
     btrblocks::arrow::DirectoryReader directoryReader;
     const btrblocks::FileMetadata* metadata;

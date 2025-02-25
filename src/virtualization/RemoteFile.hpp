@@ -6,7 +6,7 @@
 
 #include "VirtualizedFile.hpp"
 
-class RemoteFile : public VirtualizedFile {
+class RemoteFile final : public VirtualizedFile {
      std::string key;
      constexpr static std::string bucket = "adl-tpch";
      constexpr static size_t increment = 16 * (1 << 20);

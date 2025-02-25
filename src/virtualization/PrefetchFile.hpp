@@ -1,4 +1,3 @@
-#include <aws/core/Aws.h>
 #include <aws/s3-crt/S3CrtClient.h>
 #include <aws/s3-crt/model/GetObjectRequest.h>
 #include <aws/s3-crt/model/HeadObjectRequest.h>
@@ -6,7 +5,7 @@
 
 #include "VirtualizedFile.hpp"
 
-class PrefetchFile : public VirtualizedFile {
+class PrefetchFile final : public VirtualizedFile {
     std::string key;
     std::atomic<int> outstandingRequests = 0;
     constexpr static std::string bucket = "adl-tpch";
@@ -37,8 +36,8 @@ public:
                    const Aws::S3Crt::Model::GetObjectRequest&,
                    Aws::S3Crt::Model::GetObjectOutcome outcome,
                    const std::shared_ptr<const Aws::Client::AsyncCallerContext>&) {
-                       outcome.GetResult().GetBody().read(result->data() + i, s);
-                       outstandingRequests -= 1;
+               outcome.GetResult().GetBody().read(result->data() + i, s);
+               outstandingRequests -= 1;
            });
         }
         return size;
