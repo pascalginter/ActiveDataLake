@@ -39,8 +39,6 @@ public:
         if (array->type() == arrow::utf8()) {
             return writeStringColumnChunk(header, array, vec);
         }
-        std::cout << "unknown type for serialization" << std::endl;
-        std::cout << array->type()->ToString() << std::endl;
-        exit(1);
+        throw std::logic_error{"unknown type for serialization " + array->type()->ToString()};
     }
 };

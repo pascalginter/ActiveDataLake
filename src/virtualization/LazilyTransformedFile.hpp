@@ -60,20 +60,63 @@ class LazilyTransformedFile final : public VirtualizedFile {
     // TODO deduplicate logic
     [[nodiscard]] uint64_t getDataSize(int rowgroup, int column) const {
         const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
+        /*std::cout   << "{min=" << chunk_metadata.min_value << ", max=" << chunk_metadata.max_value
+                    << "count=" << chunk_metadata.tuple_count << ", unique_count=" << chunk_metadata.unique_tuple_count
+                    << "total_unique_length=" << chunk_metadata.total_unique_length
+                    << ", uncompressed=" << chunk_metadata.uncompressedSize << "}" << std::endl;*/
         uint64_t result =  chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
         return result + 5 + ParquetUtils::GetVarintSize(chunk_metadata.tuple_count << 1);
     }
 
+    [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr) const {
+        uint64_t result;
+        if (arr->type() == arrow::utf8()) {
+            result = arr->data()->buffers[1]->size() + arr->data()->buffers[2]->size() - 4;
+        }else {
+            result = arr->data()->buffers[1]->size();
+        }
+        return result + 5 + ParquetUtils::GetVarintSize(arr->length() << 1);
+    }
+
     [[nodiscard]] uint64_t getSize(int rowgroup, int column) const {
         const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
-        uint64_t result =  chunk_metadata.uncompressedSize;
+        uint64_t result = chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
         return result + ParquetUtils::writePageWithoutData(getDataSize(rowgroup, column), chunk_metadata.tuple_count).size();
     }
 
+    void writeChunk(int64_t chunkBegin, int64_t chunkEnd, S3InterfaceUtils::ByteRange byteRange, const std::function<std::shared_ptr<arrow::Array>()>& arrFunc, size_t &offset, bool isDictionaryPage, size_t uncompressed_size) {
+        if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
+            int64_t begin = std::max(chunkBegin, byteRange.begin);
+            int64_t end = std::min(chunkEnd, byteRange.end);
+            // should not be needed, but warns if a reader does something unexpected
+            assert(begin == chunkBegin);
+            assert(end == chunkEnd);
+
+            curr_buffer.resize(uncompressed_size);
+
+            auto arr = arrFunc();
+
+            const bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
+            ColumnChunkWriter::writeColumnChunk(
+                ParquetUtils::writePageWithoutData(getDataSize(arr), arr->length(),
+                    isDictionaryPage, isDictionaryEncoded),
+                isDictionaryEncoded ? std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices() : arr,
+                curr_buffer);
+            assert(begin - chunkBegin >= 0);
+            assert(begin - chunkBegin < curr_buffer.size());
+            assert(end + 1 - chunkBegin >= 0);
+            assert(end + 1 - chunkBegin <= curr_buffer.size());
+            assert(offset + end - begin + 1 <= buffer.size());
+            memcpy(buffer.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
+            assert(curr_buffer.size() >= end - begin + 1);
+            offset += end - begin + 1;
+        }
+    }
+
 public:
-    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 16) :
+    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 1) :
             directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path),
             columnReaders([path, this]() {
                 std::vector<btrblocks::arrow::ColumnStreamReader> localReaders;
@@ -128,11 +171,13 @@ public:
 
                 parquet::EncodedStatistics statistics;
                 size_t num_bytes;
+                bool isString = false;
                 switch (column_info.type) {
                     case btrblocks::ColumnType::INTEGER:
                         num_bytes = 4;
                         break;
                     case btrblocks::ColumnType::STRING:
+                        isString = true;
                         num_bytes = 8;
                         break;
                     default:
@@ -142,17 +187,23 @@ public:
                 statistics.set_max(std::string(reinterpret_cast<char*>(&max), num_bytes));
                 columnChunk->SetStatistics(statistics);
 
-                columnChunk->Finish(tuple_count, -1, -1, total_bytes,
-                    uncompressed_size, uncompressed_size, false, false,
-                    {{parquet::Encoding::PLAIN, 0}}, {});
+                int64_t dictionary_page_offset = isString ? total_bytes : -1;
+                int64_t data_page_offset = isString ? total_bytes + 1000 : total_bytes;
+                uncompressed_size += isString ? 1000 : 0;
+                std::cout << total_bytes << std::endl;
+                std::cout << j << " " << uncompressed_size << " " << data_page_offset << " " << dictionary_page_offset << std::endl;
+                columnChunk->Finish(tuple_count, dictionary_page_offset, -1, data_page_offset,
+                    uncompressed_size, uncompressed_size, isString, false,
+                    {}, {});
                 total_bytes += uncompressed_size;
                 rowgroup_bytes += uncompressed_size;
             }
+            std::cout << "finish rowgroup" << i / combinedChunks_ << std::endl;
             rowGroupBuilder->Finish(rowgroup_bytes);
         }
         parquetMetadata = builder->Finish();
         serializedParquetMetadata = parquetMetadata->SerializeToString();
-        size_ = calculateSizeFromFileMetadata(metadata) + serializedParquetMetadata.size() + 12;
+        size_ = total_bytes + serializedParquetMetadata.size() + 8;
         metadata_offset = size_ - 8 - serializedParquetMetadata.size();
     }
 
@@ -161,6 +212,7 @@ public:
     }
 
     std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
+        std::cout << byteRange.begin << " " << byteRange.end << std::endl;
         assert(byteRange.end <= size_);
         buffer.resize(byteRange.size());
         size_t offset = 0;
@@ -173,40 +225,51 @@ public:
         }
         auto& localReaders = columnReaders.local();
         assert(localReaders.size() == metadata->num_columns);
-        std::shared_ptr<arrow::Array> arr;
         for (int i=0; i<metadata->num_chunks; i+=combinedChunks_) {
             int rowgroup = i / combinedChunks_;
             for (int j=0; j!=metadata->num_columns; j++) {
-                int64_t chunkBegin = parquetMetadata->RowGroup(rowgroup)->ColumnChunk(j)->data_page_offset();
-                for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
-                    int chunkI = i + chunk;
-                    int64_t uncompressed_size = getSize(chunkI, j);
-                    int64_t num_values = getChunkInfo(chunkI, j).tuple_count;
-                    int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
-                    if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
+                auto columnChunkMeta = parquetMetadata->RowGroup(rowgroup)->ColumnChunk(j);
+                int64_t chunkBegin = columnChunkMeta->has_dictionary_page() ?
+                    columnChunkMeta->dictionary_page_offset() : columnChunkMeta->data_page_offset();
 
-                        int64_t begin = std::max(chunkBegin, byteRange.begin);
-                        int64_t end = std::min(chunkEnd, byteRange.end);
-                        // should not be needed, but warns if a reader does something unexpected
-                        assert(begin == chunkBegin);
-                        assert(end == chunkEnd);
-
-                        auto status = localReaders[j].Read(chunkI, &arr);
+                std::vector<std::shared_ptr<arrow::Array>> arrays;
+                std::function<std::shared_ptr<arrow::Array>(int)> arrFunc;
+                if (columnChunkMeta->has_dictionary_page()
+                    && !(columnChunkMeta->dictionary_page_offset() > byteRange.end
+                        || columnChunkMeta->data_page_offset() < byteRange.begin)) {
+                    std::shared_ptr<arrow::Array> dictionaryArr;
+                    for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
+                        const int chunkI = i + chunk;
+                        std::shared_ptr<arrow::Array> arr;
+                        const auto status = localReaders[j].Read(chunkI, &arr);
                         assert(status.ok());
-                        curr_buffer.resize(uncompressed_size);
-
-                        ColumnChunkWriter::writeColumnChunk(
-                            ParquetUtils::writePageWithoutData(getDataSize(chunkI, j), num_values),
-                            arr, curr_buffer);
-                        assert(begin - chunkBegin >= 0);
-                        assert(begin - chunkBegin < curr_buffer.size());
-                        assert(end + 1 - chunkBegin >= 0);
-                        assert(end + 1 - chunkBegin <= curr_buffer.size());
-                        assert(offset + end - begin + 1 <= buffer.size());
-                        memcpy(buffer.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
-                        assert(curr_buffer.size() >= end - begin + 1);
-                        offset += end - begin + 1;
+                        arrays.push_back(arr);
+                        if (arrow::is_dictionary(arr->type_id())) {
+                            dictionaryArr = std::static_pointer_cast<arrow::DictionaryArray>(arr)->dictionary();
+                        }
                     }
+                    std::cout << "crash candidate" << std::endl;
+                    writeChunk(chunkBegin, chunkBegin + 1000, byteRange, [dictionaryArr](){ return dictionaryArr; }, offset, true, 1000);
+                    std::cout << "not crashed" << std::endl;
+                    chunkBegin += 1000;
+                    // offset?
+                    arrFunc = [&arrays, i](const int chunkI) {
+                        return arrays[chunkI - i];
+                    };
+                }else {
+                   arrFunc = [&localReaders, j](const int chunkI) {
+                        std::shared_ptr<arrow::Array> arr;
+                        const auto status = localReaders[j].Read(chunkI, &arr);
+                        assert(status.ok());
+                        return arr;
+                    };
+                }
+                for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
+                    const int chunkI = i + chunk;
+                    int64_t uncompressed_size = getSize(chunkI, j);
+                    int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
+
+                    writeChunk(chunkBegin, chunkEnd, byteRange, [arrFunc, chunkI](){ return arrFunc(chunkI);} , offset, false, uncompressed_size);
                     // Prepare next chunk
                     chunkBegin += uncompressed_size;
                 }

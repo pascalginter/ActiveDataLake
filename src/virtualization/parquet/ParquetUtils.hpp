@@ -3,9 +3,11 @@
 
 #define NEXT_INTEGER_FIELD 0x15
 #define DATA_PAGE_V1 0x00
+#define DICTIONARY_PAGE 0x02
 #define NEXT_STRUCT_FIELD 0x2c
 #define END_STRUCT 0x00
 #define PLAIN_ENCODING 0x00
+#define PLAIN_DICTIONARY_ENCODING 0x02
 #define RLE_ENCODING 0x03
 
 class ParquetUtils {
@@ -35,9 +37,12 @@ private:
         } while (val != 0);
     }
 public:
-    static std::vector<uint8_t> writePageWithoutData(uint64_t uncompressed_size, uint64_t num_values){
+    static std::vector<uint8_t> writePageWithoutData(uint64_t uncompressed_size,
+                                                     uint64_t num_values,
+                                                     bool isDictionaryPage = false,
+                                                     bool isDictionaryEncoded = false){
         // Declare data page
-        std::vector<uint8_t> result{NEXT_INTEGER_FIELD, DATA_PAGE_V1};
+        std::vector<uint8_t> result{NEXT_INTEGER_FIELD, GetZigZag(isDictionaryPage ? DICTIONARY_PAGE : DATA_PAGE_V1)};
         result.reserve(40);
         // Write uncompressed size
         result.push_back(NEXT_INTEGER_FIELD);
@@ -52,24 +57,31 @@ public:
         appendZigZagVarint(result, GetZigZag(num_values));
         // Write encoding
         result.push_back(NEXT_INTEGER_FIELD);
-        appendZigZagVarint(result, GetZigZag(PLAIN_ENCODING));
-        // Write definition level encoding
-        result.push_back(NEXT_INTEGER_FIELD);
-        appendZigZagVarint(result, GetZigZag(RLE_ENCODING));
-        // Write repetition level encoding
-        result.push_back(NEXT_INTEGER_FIELD);
-        appendZigZagVarint(result, GetZigZag(RLE_ENCODING));
-        // End data page
+        appendZigZagVarint(result, GetZigZag(isDictionaryEncoded ? PLAIN_DICTIONARY_ENCODING : PLAIN_ENCODING));
+        if (!isDictionaryPage) {
+            // Write encoding
+            result.push_back(NEXT_INTEGER_FIELD);
+            appendZigZagVarint(result, GetZigZag(PLAIN_ENCODING));
+            // Write definition level encoding
+            result.push_back(NEXT_INTEGER_FIELD);
+            appendZigZagVarint(result, GetZigZag(RLE_ENCODING));
+            // Write repetition level encoding
+            result.push_back(NEXT_INTEGER_FIELD);
+            appendZigZagVarint(result, GetZigZag(RLE_ENCODING));
+        }
+        // End dictionary/data page
         result.push_back(END_STRUCT);
         // End page
         result.push_back(END_STRUCT);
 
-        // Write length of rle run
-        result.push_back((GetVarintSize(num_values << 1) + 1));
-        for (int i=0; i!=3; i++) result.push_back(0x00);
+        if (!isDictionaryPage) {
+            // Write length of rle run
+            result.push_back((GetVarintSize(num_values << 1) + 1));
+            for (int i=0; i!=3; i++) result.push_back(0x00);
 
-        appendZigZagVarint(result, num_values << 1);
-        result.push_back(0x01);
+            appendZigZagVarint(result, num_values << 1);
+            result.push_back(0x01);
+        }
 
         return result;
     }

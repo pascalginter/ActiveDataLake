@@ -10,7 +10,7 @@ ExternalProject_Add(
         btrblocks_src
         PREFIX "vendor/btrblocks"
         GIT_REPOSITORY "https://github.com/pascalginter/btrblocks"
-        GIT_TAG "arrow-plain"
+        GIT_TAG "arrow-support"
         CMAKE_ARGS
         -DBUILD_SHARED_LIBRARY=ON
         -DCMAKE_BUILD_TYPE=Release
