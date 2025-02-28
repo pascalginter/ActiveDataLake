@@ -65,6 +65,10 @@ class LazilyTransformedFile final : public VirtualizedFile {
         return result + 5 + ParquetUtils::GetVarintSize(chunk_metadata.tuple_count << 1);
     }
 
+    [[nodiscard]] uint64_t getDictEncodedDataSize(uint64_t num_values) {
+        return num_values * sizeof(int32_t) + 6 + ParquetUtils::GetVarintSize(num_values << 1) + ParquetUtils::GetVarintSize(((num_values + 7 )/ 8) << 1 | 1);
+    }
+
     [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr, bool isDictionary, bool isDictEncoded) const {
         uint64_t result;
         if (isDictionary || arr->type() == arrow::utf8()) {
@@ -173,22 +177,24 @@ public:
                     auto& chunk_info = getChunkInfo(i+chunk, j);
                     min = std::min(min, chunk_info.min_value);
                     max = std::max(max, chunk_info.max_value);
-                    uncompressed_size += getSize(i+chunk, j);
-                    if (chunk_info.unique_tuple_count > 0) {
+                    if (chunk_info.unique_tuple_count > 0 && chunk_info.unique_tuple_count < 1000) {
                         dictionary_count += chunk_info.unique_tuple_count;
                         dictionary_length += chunk_info.total_unique_length;
+                        uint64_t dataSize = getDictEncodedDataSize(chunk_info.tuple_count);
+                        uncompressed_size += chunk_info.tuple_count * sizeof(int32_t) +
+                            ParquetUtils::writePageWithoutData(dataSize, chunk_info.tuple_count, false, true).size();
+                    }else {
+                        uncompressed_size += getSize(i+chunk, j);
                     }
                 }
 
                 parquet::EncodedStatistics statistics;
                 size_t num_bytes;
-                bool isString = false;
                 switch (column_info.type) {
                     case btrblocks::ColumnType::INTEGER:
                         num_bytes = 4;
                         break;
                     case btrblocks::ColumnType::STRING:
-                        isString = true;
                         num_bytes = 8;
                         break;
                     default:
@@ -198,7 +204,7 @@ public:
                 statistics.set_max(std::string(reinterpret_cast<char*>(&max), num_bytes));
                 columnChunk->SetStatistics(statistics);
 
-                bool isDictionary = dictionary_count < 10000 && dictionary_count != 0;
+                bool isDictionary = dictionary_count != 0;
                 int64_t dictionary_page_offset = isDictionary ? total_bytes : -1;
                 uint64_t dictionary_size = getDictionarySize(dictionary_count, dictionary_length);
                 int64_t data_page_offset = isDictionary ? total_bytes + dictionary_size : total_bytes;
@@ -278,10 +284,19 @@ public:
                 }
                 for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
                     const int chunkI = i + chunk;
-                    int64_t uncompressed_size = getSize(chunkI, j);
+                    auto arr = arrFunc(chunkI);
+                    bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
+                    int64_t uncompressed_size;
+                    if (isDictionaryEncoded) {
+                        uint64_t dataSize = getDictEncodedDataSize(arr->length());
+                        uncompressed_size = arr->length() * sizeof(int32_t) +
+                            ParquetUtils::writePageWithoutData(dataSize, arr->length(), false, true).size();
+                    }else {
+                        uncompressed_size = getSize(chunkI, j);
+                    }
                     int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
 
-                    writeChunk(chunkBegin, chunkEnd, byteRange, [arrFunc, chunkI](){ return arrFunc(chunkI);} , offset, false, uncompressed_size);
+                    writeChunk(chunkBegin, chunkEnd, byteRange, [arr](){ return arr;} , offset, false, uncompressed_size);
                     // Prepare next chunk
                     chunkBegin += uncompressed_size;
                 }
