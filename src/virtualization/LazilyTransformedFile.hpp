@@ -102,6 +102,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
             curr_buffer.resize(uncompressed_size);
 
             auto arr = arrFunc();
+            std::cout << arr << std::endl;
             const bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
             ColumnChunkWriter::writeColumnChunk(
                 ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage, isDictionaryEncoded), arr->length(),
@@ -197,12 +198,13 @@ public:
                 statistics.set_max(std::string(reinterpret_cast<char*>(&max), num_bytes));
                 columnChunk->SetStatistics(statistics);
 
-                int64_t dictionary_page_offset = dictionary_count ? total_bytes : -1;
+                bool isDictionary = dictionary_count < 10000 && dictionary_count != 0;
+                int64_t dictionary_page_offset = isDictionary ? total_bytes : -1;
                 uint64_t dictionary_size = getDictionarySize(dictionary_count, dictionary_length);
-                int64_t data_page_offset = dictionary_count ? total_bytes + dictionary_size : total_bytes;
-                uncompressed_size += dictionary_count ? dictionary_size : 0;
+                int64_t data_page_offset = isDictionary ? total_bytes + dictionary_size : total_bytes;
+                uncompressed_size += isDictionary ? dictionary_size : 0;
                 columnChunk->Finish(tuple_count, dictionary_page_offset, -1, data_page_offset,
-                    uncompressed_size, uncompressed_size, dictionary_count, false,
+                    uncompressed_size, uncompressed_size, isDictionary, false,
                     {}, {});
                 total_bytes += uncompressed_size;
                 rowgroup_bytes += uncompressed_size;
@@ -220,7 +222,7 @@ public:
     }
 
     std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
-        std::cout << byteRange.begin << " " << byteRange.end << std::endl;
+        std::cout << "range: " << byteRange.begin << " " << byteRange.end << std::endl;
         assert(byteRange.end <= size_);
         buffer.resize(byteRange.size());
         size_t offset = 0;
@@ -250,6 +252,7 @@ public:
                         const int chunkI = i + chunk;
                         std::shared_ptr<arrow::Array> arr;
                         const auto status = localReaders[j].Read(chunkI, &arr);
+                        std::cout << arr->ToString() << std::endl;
                         assert(status.ok() && arr != nullptr);
                         arrays.push_back(arr);
                         if (arrow::is_dictionary(arr->type_id())) {
