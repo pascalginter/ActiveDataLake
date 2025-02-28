@@ -35,6 +35,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     int combinedChunks_;
     std::mutex mtx;
     std::string path;
+    std::vector<std::vector<int64_t>> uncompressedSizes;
 
     [[nodiscard]] size_t calculateSizeFromFileMetadata(const btrblocks::FileMetadata* metadata) const {
         size_t result = 0;
@@ -155,6 +156,7 @@ public:
         auto parquetWriterProperties = parquet::WriterProperties::Builder().build();
         parquet::arrow::ToParquetSchema(schema.get(), *parquetWriterProperties, *parquet::default_arrow_writer_properties(), &schemaDescriptor);
         auto builder = parquet::FileMetaDataBuilder::Make(schemaDescriptor.get(), parquetWriterProperties);
+        uncompressedSizes = std::vector<std::vector<int64_t>>(metadata->num_columns, std::vector<int64_t>(metadata->num_chunks));
 
         int64_t total_bytes = 4;
         for (int i=0; i<metadata->num_chunks; i+=combinedChunks) {
@@ -174,18 +176,20 @@ public:
                 auto& initial_info = getChunkInfo(i, j);
                 uint64_t min = initial_info.min_value, max = initial_info.max_value;
                 for (int chunk = 0; chunk != combinedChunks && i+chunk < metadata->num_chunks; chunk++){
-                    auto& chunk_info = getChunkInfo(i+chunk, j);
+                    const int chunkI = i + chunk;
+                    auto& chunk_info = getChunkInfo(chunkI, j);
                     min = std::min(min, chunk_info.min_value);
                     max = std::max(max, chunk_info.max_value);
                     if (chunk_info.unique_tuple_count > 0 && chunk_info.unique_tuple_count < 1000) {
                         dictionary_count += chunk_info.unique_tuple_count;
                         dictionary_length += chunk_info.total_unique_length;
                         uint64_t dataSize = getDictEncodedDataSize(chunk_info.tuple_count);
-                        uncompressed_size += chunk_info.tuple_count * sizeof(int32_t) +
+                        uncompressedSizes[j][chunkI] += chunk_info.tuple_count * sizeof(int32_t) +
                             ParquetUtils::writePageWithoutData(dataSize, chunk_info.tuple_count, false, true).size();
                     }else {
-                        uncompressed_size += getSize(i+chunk, j);
+                        uncompressedSizes[j][chunkI] = getSize(chunkI, j);
                     }
+                    uncompressed_size += uncompressedSizes[j][chunkI];
                 }
 
                 parquet::EncodedStatistics statistics;
@@ -258,17 +262,14 @@ public:
                         const int chunkI = i + chunk;
                         std::shared_ptr<arrow::Array> arr;
                         const auto status = localReaders[j].Read(chunkI, &arr);
-                        std::cout << arr->ToString() << std::endl;
                         assert(status.ok() && arr != nullptr);
                         arrays.push_back(arr);
                         if (arrow::is_dictionary(arr->type_id())) {
                             dictionaryArr = std::static_pointer_cast<arrow::DictionaryArray>(arr)->dictionary();
                         }
                     }
-                    std::cout << "crash candidate" << std::endl;
                     auto dictionaryPageSize = columnChunkMeta->data_page_offset() - columnChunkMeta->dictionary_page_offset();
                     writeChunk(chunkBegin, chunkBegin + dictionaryPageSize - 1, byteRange, [dictionaryArr](){ return dictionaryArr; }, offset, true, dictionaryPageSize);
-                    std::cout << "not crashed" << std::endl;
                     chunkBegin += dictionaryPageSize;
                     // offset?
                     arrFunc = [&arrays, i](const int chunkI) {
@@ -284,21 +285,11 @@ public:
                 }
                 for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
                     const int chunkI = i + chunk;
-                    auto arr = arrFunc(chunkI);
-                    bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
-                    int64_t uncompressed_size;
-                    if (isDictionaryEncoded) {
-                        uint64_t dataSize = getDictEncodedDataSize(arr->length());
-                        uncompressed_size = arr->length() * sizeof(int32_t) +
-                            ParquetUtils::writePageWithoutData(dataSize, arr->length(), false, true).size();
-                    }else {
-                        uncompressed_size = getSize(chunkI, j);
-                    }
-                    int64_t chunkEnd = chunkBegin + uncompressed_size - 1;
+                    int64_t chunkEnd = chunkBegin + uncompressedSizes[j][chunkI] - 1;
 
-                    writeChunk(chunkBegin, chunkEnd, byteRange, [arr](){ return arr;} , offset, false, uncompressed_size);
+                    writeChunk(chunkBegin, chunkEnd, byteRange, [arrFunc, chunkI](){ return arrFunc(chunkI);} , offset, false, uncompressedSizes[j][chunkI]);
                     // Prepare next chunk
-                    chunkBegin += uncompressed_size;
+                    chunkBegin += uncompressedSizes[j][chunkI];
                 }
             }
         }
