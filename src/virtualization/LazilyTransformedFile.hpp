@@ -36,6 +36,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     std::mutex mtx;
     std::string path;
     std::vector<std::vector<int64_t>> uncompressedSizes;
+    //std::vector<std::vector<int64_t>> dictionarySizes;
 
     [[nodiscard]] size_t calculateSizeFromFileMetadata(const btrblocks::FileMetadata* metadata) const {
         size_t result = 0;
@@ -107,7 +108,6 @@ class LazilyTransformedFile final : public VirtualizedFile {
             curr_buffer.resize(uncompressed_size);
 
             auto arr = arrFunc();
-            std::cout << arr << std::endl;
             const bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
             ColumnChunkWriter::writeColumnChunk(
                 ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage, isDictionaryEncoded), arr->length(),
@@ -126,7 +126,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     }
 
 public:
-    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 1) :
+    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 16) :
             directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path),
             columnReaders([path, this]() {
                 std::vector<btrblocks::arrow::ColumnStreamReader> localReaders;
@@ -208,10 +208,10 @@ public:
                 statistics.set_max(std::string(reinterpret_cast<char*>(&max), num_bytes));
                 columnChunk->SetStatistics(statistics);
 
-                bool isDictionary = dictionary_count != 0;
-                int64_t dictionary_page_offset = isDictionary ? total_bytes : -1;
-                uint64_t dictionary_size = getDictionarySize(dictionary_count, dictionary_length);
-                int64_t data_page_offset = isDictionary ? total_bytes + dictionary_size : total_bytes;
+                const bool isDictionary = dictionary_count != 0;
+                const int64_t dictionary_page_offset = isDictionary ? total_bytes : -1;
+                const int64_t dictionary_size = getDictionarySize(dictionary_count, dictionary_length);
+                const int64_t data_page_offset = isDictionary ? total_bytes + dictionary_size : total_bytes;
                 uncompressed_size += isDictionary ? dictionary_size : 0;
                 columnChunk->Finish(tuple_count, dictionary_page_offset, -1, data_page_offset,
                     uncompressed_size, uncompressed_size, isDictionary, false,
@@ -252,12 +252,13 @@ public:
                 int64_t chunkBegin = columnChunkMeta->has_dictionary_page() ?
                     columnChunkMeta->dictionary_page_offset() : columnChunkMeta->data_page_offset();
 
-                std::vector<std::shared_ptr<arrow::Array>> arrays;
+                arrow::ArrayVector arrays;
+                arrow::StringBuilder builder;
                 std::function<std::shared_ptr<arrow::Array>(int)> arrFunc;
                 if (columnChunkMeta->has_dictionary_page()
                     && !(columnChunkMeta->dictionary_page_offset() > byteRange.end
                         || columnChunkMeta->data_page_offset() < byteRange.begin)) {
-                    std::shared_ptr<arrow::Array> dictionaryArr;
+
                     for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
                         const int chunkI = i + chunk;
                         std::shared_ptr<arrow::Array> arr;
@@ -265,10 +266,18 @@ public:
                         assert(status.ok() && arr != nullptr);
                         arrays.push_back(arr);
                         if (arrow::is_dictionary(arr->type_id())) {
-                            dictionaryArr = std::static_pointer_cast<arrow::DictionaryArray>(arr)->dictionary();
+                            auto dictArray = std::static_pointer_cast<arrow::DictionaryArray>(arr)->dictionary();
+                            std::cout << "attempting append" << std::endl;
+                            auto status = builder.AppendArraySlice(*dictArray->data(), 0, dictArray->length());
+                            std::cout << "survived append " << status.ok() << std::endl;
                         }
                     }
-                    auto dictionaryPageSize = columnChunkMeta->data_page_offset() - columnChunkMeta->dictionary_page_offset();
+
+                    std::shared_ptr<arrow::Array> dictionaryArr;
+                    auto status = builder.Finish(&dictionaryArr);
+                    std::cout << status.ok() << " " << status.ToString() << std::endl;
+                    std::cout << dictionaryArr->ToString() << std::endl;
+                    const int64_t dictionaryPageSize = columnChunkMeta->data_page_offset() - columnChunkMeta->dictionary_page_offset();
                     writeChunk(chunkBegin, chunkBegin + dictionaryPageSize - 1, byteRange, [dictionaryArr](){ return dictionaryArr; }, offset, true, dictionaryPageSize);
                     chunkBegin += dictionaryPageSize;
                     // offset?
