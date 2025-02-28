@@ -5,6 +5,7 @@
 #define DATA_PAGE_V1 0x00
 #define DICTIONARY_PAGE 0x02
 #define NEXT_STRUCT_FIELD 0x2c
+#define DICTIONARY_STRUCT_FIELD 0x4c
 #define END_STRUCT 0x00
 #define PLAIN_ENCODING 0x00
 #define PLAIN_DICTIONARY_ENCODING 0x02
@@ -51,7 +52,7 @@ public:
         result.push_back(NEXT_INTEGER_FIELD);
         appendZigZagVarint(result, GetZigZag(uncompressed_size));
         // Start struct
-        result.push_back(NEXT_STRUCT_FIELD);
+        result.push_back(isDictionaryPage ? DICTIONARY_STRUCT_FIELD : NEXT_STRUCT_FIELD);
         // Write num_values
         result.push_back(NEXT_INTEGER_FIELD);
         appendZigZagVarint(result, GetZigZag(num_values));
@@ -82,6 +83,7 @@ public:
             appendZigZagVarint(result, num_values << 1);
             result.push_back(0x01);
         }
+        if (isDictionaryPage) std::cout << "size " << result.size() << std::endl;
 
         return result;
     }

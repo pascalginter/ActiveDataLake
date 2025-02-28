@@ -60,22 +60,21 @@ class LazilyTransformedFile final : public VirtualizedFile {
     // TODO deduplicate logic
     [[nodiscard]] uint64_t getDataSize(int rowgroup, int column) const {
         const btrblocks::ColumnChunkInfo& chunk_metadata = getChunkInfo(rowgroup, column);
-        /*std::cout   << "{min=" << chunk_metadata.min_value << ", max=" << chunk_metadata.max_value
-                    << "count=" << chunk_metadata.tuple_count << ", unique_count=" << chunk_metadata.unique_tuple_count
-                    << "total_unique_length=" << chunk_metadata.total_unique_length
-                    << ", uncompressed=" << chunk_metadata.uncompressedSize << "}" << std::endl;*/
         uint64_t result =  chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
         return result + 5 + ParquetUtils::GetVarintSize(chunk_metadata.tuple_count << 1);
     }
 
-    [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr) const {
+    [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr, bool isDictionary) const {
         uint64_t result;
-        if (arr->type() == arrow::utf8()) {
-            result = arr->data()->buffers[1]->size() + arr->data()->buffers[2]->size() - 4;
+        if (isDictionary || arr->type() == arrow::utf8()) {
+            int64_t tuple_count = arr->data()->length;
+            const auto* offsets = reinterpret_cast<const int32_t*>(arr->data()->buffers[1]->data());
+            result = tuple_count * 4 + offsets[tuple_count];
         }else {
-            result = arr->data()->buffers[1]->size();
+            result = arr->length() * arr->type()->byte_width();
         }
+        if (isDictionary) return result;
         return result + 5 + ParquetUtils::GetVarintSize(arr->length() << 1);
     }
 
@@ -84,6 +83,11 @@ class LazilyTransformedFile final : public VirtualizedFile {
         uint64_t result = chunk_metadata.uncompressedSize;
         if (metadata->columns[column].type == btrblocks::ColumnType::STRING) result -= 4;
         return result + ParquetUtils::writePageWithoutData(getDataSize(rowgroup, column), chunk_metadata.tuple_count).size();
+    }
+
+    [[nodiscard]] uint64_t getDictionarySize(uint64_t num_unique_values, uint64_t total_length) {
+        uint64_t dataSize = total_length + num_unique_values * sizeof(int32_t);
+        return dataSize + ParquetUtils::writePageWithoutData(dataSize, num_unique_values, true).size();
     }
 
     void writeChunk(int64_t chunkBegin, int64_t chunkEnd, S3InterfaceUtils::ByteRange byteRange, const std::function<std::shared_ptr<arrow::Array>()>& arrFunc, size_t &offset, bool isDictionaryPage, size_t uncompressed_size) {
@@ -97,10 +101,9 @@ class LazilyTransformedFile final : public VirtualizedFile {
             curr_buffer.resize(uncompressed_size);
 
             auto arr = arrFunc();
-
             const bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
             ColumnChunkWriter::writeColumnChunk(
-                ParquetUtils::writePageWithoutData(getDataSize(arr), arr->length(),
+                ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage), arr->length(),
                     isDictionaryPage, isDictionaryEncoded),
                 isDictionaryEncoded ? std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices() : arr,
                 curr_buffer);
@@ -160,6 +163,8 @@ public:
                 btrblocks::ColumnInfo& column_info = metadata->columns[j];
                 auto* columnChunk = rowGroupBuilder->NextColumnChunk();
                 uint64_t uncompressed_size = 0;
+                uint64_t dictionary_count = 0;
+                uint64_t dictionary_length = 0;
                 auto& initial_info = getChunkInfo(i, j);
                 uint64_t min = initial_info.min_value, max = initial_info.max_value;
                 for (int chunk = 0; chunk != combinedChunks && i+chunk < metadata->num_chunks; chunk++){
@@ -167,6 +172,10 @@ public:
                     min = std::min(min, chunk_info.min_value);
                     max = std::max(max, chunk_info.max_value);
                     uncompressed_size += getSize(i+chunk, j);
+                    if (chunk_info.unique_tuple_count > 0) {
+                        dictionary_count += chunk_info.unique_tuple_count;
+                        dictionary_length += chunk_info.total_unique_length;
+                    }
                 }
 
                 parquet::EncodedStatistics statistics;
@@ -187,18 +196,16 @@ public:
                 statistics.set_max(std::string(reinterpret_cast<char*>(&max), num_bytes));
                 columnChunk->SetStatistics(statistics);
 
-                int64_t dictionary_page_offset = isString ? total_bytes : -1;
-                int64_t data_page_offset = isString ? total_bytes + 1000 : total_bytes;
-                uncompressed_size += isString ? 1000 : 0;
-                std::cout << total_bytes << std::endl;
-                std::cout << j << " " << uncompressed_size << " " << data_page_offset << " " << dictionary_page_offset << std::endl;
+                int64_t dictionary_page_offset = dictionary_count ? total_bytes : -1;
+                uint64_t dictionary_size = getDictionarySize(dictionary_count, dictionary_length);
+                int64_t data_page_offset = dictionary_count ? total_bytes + dictionary_size : total_bytes;
+                uncompressed_size += dictionary_count ? dictionary_size : 0;
                 columnChunk->Finish(tuple_count, dictionary_page_offset, -1, data_page_offset,
-                    uncompressed_size, uncompressed_size, isString, false,
+                    uncompressed_size, uncompressed_size, dictionary_count, false,
                     {}, {});
                 total_bytes += uncompressed_size;
                 rowgroup_bytes += uncompressed_size;
             }
-            std::cout << "finish rowgroup" << i / combinedChunks_ << std::endl;
             rowGroupBuilder->Finish(rowgroup_bytes);
         }
         parquetMetadata = builder->Finish();
@@ -242,16 +249,18 @@ public:
                         const int chunkI = i + chunk;
                         std::shared_ptr<arrow::Array> arr;
                         const auto status = localReaders[j].Read(chunkI, &arr);
-                        assert(status.ok());
+                        assert(status.ok() && arr != nullptr);
+                        std::cout << arr->ToString() << std::endl;
                         arrays.push_back(arr);
                         if (arrow::is_dictionary(arr->type_id())) {
                             dictionaryArr = std::static_pointer_cast<arrow::DictionaryArray>(arr)->dictionary();
                         }
                     }
                     std::cout << "crash candidate" << std::endl;
-                    writeChunk(chunkBegin, chunkBegin + 1000, byteRange, [dictionaryArr](){ return dictionaryArr; }, offset, true, 1000);
+                    auto dictionaryPageSize = columnChunkMeta->data_page_offset() - columnChunkMeta->dictionary_page_offset();
+                    writeChunk(chunkBegin, chunkBegin + dictionaryPageSize - 1, byteRange, [dictionaryArr](){ return dictionaryArr; }, offset, true, dictionaryPageSize);
                     std::cout << "not crashed" << std::endl;
-                    chunkBegin += 1000;
+                    chunkBegin += dictionaryPageSize;
                     // offset?
                     arrFunc = [&arrays, i](const int chunkI) {
                         return arrays[chunkI - i];
