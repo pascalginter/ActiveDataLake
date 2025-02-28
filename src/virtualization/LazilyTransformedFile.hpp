@@ -65,7 +65,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
         return result + 5 + ParquetUtils::GetVarintSize(chunk_metadata.tuple_count << 1);
     }
 
-    [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr, bool isDictionary) const {
+    [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr, bool isDictionary, bool isDictEncoded) const {
         uint64_t result;
         if (isDictionary || arr->type() == arrow::utf8()) {
             int64_t tuple_count = arr->data()->length;
@@ -75,6 +75,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
             result = arr->length() * arr->type()->byte_width();
         }
         if (isDictionary) return result;
+        if (isDictEncoded) result += 1 + ParquetUtils::GetVarintSize(((arr->length() + 7 )/ 8) << 1 | 1);
         return result + 5 + ParquetUtils::GetVarintSize(arr->length() << 1);
     }
 
@@ -103,7 +104,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
             auto arr = arrFunc();
             const bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
             ColumnChunkWriter::writeColumnChunk(
-                ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage), arr->length(),
+                ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage, isDictionaryEncoded), arr->length(),
                     isDictionaryPage, isDictionaryEncoded),
                 isDictionaryEncoded ? std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices() : arr,
                 curr_buffer);
@@ -250,7 +251,6 @@ public:
                         std::shared_ptr<arrow::Array> arr;
                         const auto status = localReaders[j].Read(chunkI, &arr);
                         assert(status.ok() && arr != nullptr);
-                        std::cout << arr->ToString() << std::endl;
                         arrays.push_back(arr);
                         if (arrow::is_dictionary(arr->type_id())) {
                             dictionaryArr = std::static_pointer_cast<arrow::DictionaryArray>(arr)->dictionary();

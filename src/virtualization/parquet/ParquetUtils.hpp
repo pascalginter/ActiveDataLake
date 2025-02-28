@@ -83,7 +83,12 @@ public:
             appendZigZagVarint(result, num_values << 1);
             result.push_back(0x01);
         }
-        if (isDictionaryPage) std::cout << "size " << result.size() << std::endl;
+        if (isDictionaryEncoded) {
+            // bit width
+            result.push_back(32);
+            assert(num_values & 7 == 0);
+            appendZigZagVarint(result, ((num_values + 7) / 8) << 1 | 1);
+        }
 
         return result;
     }
