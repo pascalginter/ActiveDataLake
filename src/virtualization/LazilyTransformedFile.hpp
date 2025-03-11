@@ -97,7 +97,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
         return dataSize + ParquetUtils::writePageWithoutData(dataSize, num_unique_values, true).size();
     }
 
-    void writeChunk(int64_t chunkBegin, int64_t chunkEnd, S3InterfaceUtils::ByteRange byteRange, const std::function<std::shared_ptr<arrow::Array>()>& arrFunc, size_t &offset, bool isDictionaryPage, size_t uncompressed_size) {
+    void writeChunk(int64_t chunkBegin, int64_t chunkEnd, S3InterfaceUtils::ByteRange byteRange, const std::shared_ptr<arrow::Array>& arr, size_t &offset, bool isDictionaryPage, size_t uncompressed_size) {
         if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
             int64_t begin = std::max(chunkBegin, byteRange.begin);
             int64_t end = std::min(chunkEnd, byteRange.end);
@@ -107,7 +107,6 @@ class LazilyTransformedFile final : public VirtualizedFile {
 
             curr_buffer.resize(uncompressed_size);
 
-            auto arr = arrFunc();
             const bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
             ColumnChunkWriter::writeColumnChunk(
                 ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage, isDictionaryEncoded), arr->length(),
@@ -183,7 +182,7 @@ public:
                     if (chunk_info.unique_tuple_count > 0 && chunk_info.unique_tuple_count < 1000) {
                         dictionary_count += chunk_info.unique_tuple_count;
                         dictionary_length += chunk_info.total_unique_length;
-                        uint64_t dataSize = getDictEncodedDataSize(chunk_info.tuple_count);
+                        const uint64_t dataSize = getDictEncodedDataSize(chunk_info.tuple_count);
                         uncompressedSizes[j][chunkI] += chunk_info.tuple_count * sizeof(int32_t) +
                             ParquetUtils::writePageWithoutData(dataSize, chunk_info.tuple_count, false, true).size();
                     }else {
@@ -244,6 +243,7 @@ public:
             offset = 4;
         }
         auto& localReaders = columnReaders.local();
+        std::shared_ptr<arrow::Array> arr;
         assert(localReaders.size() == metadata->num_columns);
         for (int i=0; i<metadata->num_chunks; i+=combinedChunks_) {
             int rowgroup = i / combinedChunks_;
@@ -254,7 +254,6 @@ public:
 
                 arrow::ArrayVector arrays;
                 arrow::StringBuilder builder;
-                std::function<std::shared_ptr<arrow::Array>(int)> arrFunc;
                 if (columnChunkMeta->has_dictionary_page()
                     && !(columnChunkMeta->dictionary_page_offset() > byteRange.end
                         || columnChunkMeta->data_page_offset() < byteRange.begin)) {
@@ -267,38 +266,35 @@ public:
                         arrays.push_back(arr);
                         if (arrow::is_dictionary(arr->type_id())) {
                             auto dictArray = std::static_pointer_cast<arrow::DictionaryArray>(arr)->dictionary();
-                            std::cout << "attempting append" << std::endl;
                             auto status = builder.AppendArraySlice(*dictArray->data(), 0, dictArray->length());
-                            std::cout << "survived append " << status.ok() << std::endl;
                         }
                     }
 
                     std::shared_ptr<arrow::Array> dictionaryArr;
                     auto status = builder.Finish(&dictionaryArr);
-                    std::cout << status.ok() << " " << status.ToString() << std::endl;
-                    std::cout << dictionaryArr->ToString() << std::endl;
                     const int64_t dictionaryPageSize = columnChunkMeta->data_page_offset() - columnChunkMeta->dictionary_page_offset();
-                    writeChunk(chunkBegin, chunkBegin + dictionaryPageSize - 1, byteRange, [dictionaryArr](){ return dictionaryArr; }, offset, true, dictionaryPageSize);
+                    writeChunk(chunkBegin, chunkBegin + dictionaryPageSize - 1, byteRange, dictionaryArr, offset, true, dictionaryPageSize);
                     chunkBegin += dictionaryPageSize;
-                    // offset?
-                    arrFunc = [&arrays, i](const int chunkI) {
-                        return arrays[chunkI - i];
-                    };
-                }else {
-                   arrFunc = [&localReaders, j](const int chunkI) {
-                        std::shared_ptr<arrow::Array> arr;
-                        const auto status = localReaders[j].Read(chunkI, &arr);
-                        assert(status.ok());
-                        return arr;
-                    };
-                }
-                for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
-                    const int chunkI = i + chunk;
-                    int64_t chunkEnd = chunkBegin + uncompressedSizes[j][chunkI] - 1;
+                    for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
+                        const int chunkI = i + chunk;
+                        int64_t chunkEnd = chunkBegin + uncompressedSizes[j][chunkI] - 1;
 
-                    writeChunk(chunkBegin, chunkEnd, byteRange, [arrFunc, chunkI](){ return arrFunc(chunkI);} , offset, false, uncompressedSizes[j][chunkI]);
-                    // Prepare next chunk
-                    chunkBegin += uncompressedSizes[j][chunkI];
+                        writeChunk(chunkBegin, chunkEnd, byteRange, arrays[chunkI - i], offset, false, uncompressedSizes[j][chunkI]);
+                        // Prepare next chunk
+                        chunkBegin += uncompressedSizes[j][chunkI];
+                    }
+                }else {
+                    for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
+                        const int chunkI = i + chunk;
+                        int64_t chunkEnd = chunkBegin + uncompressedSizes[j][chunkI] - 1;
+
+                        if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
+                            auto status = localReaders[j].Read(chunkI, &arr);
+                            writeChunk(chunkBegin, chunkEnd, byteRange, arr, offset, false, uncompressedSizes[j][chunkI]);
+                        }
+                        // Prepare next chunk
+                        chunkBegin += uncompressedSizes[j][chunkI];
+                    }
                 }
             }
         }
