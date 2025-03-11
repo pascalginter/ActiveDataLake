@@ -67,8 +67,10 @@ class LazilyTransformedFile final : public VirtualizedFile {
         return result + 5 + ParquetUtils::GetVarintSize(chunk_metadata.tuple_count << 1);
     }
 
-    [[nodiscard]] uint64_t getDictEncodedDataSize(uint64_t num_values) {
-        return num_values * sizeof(int32_t) + 6 + ParquetUtils::GetVarintSize(num_values << 1) + ParquetUtils::GetVarintSize(((num_values + 7 )/ 8) << 1 | 1);
+    [[nodiscard]] uint64_t getDictEncodedDataSize(uint64_t num_values, uint64_t num_unique_values) {
+        uint8_t bitLength = std::bit_width(num_unique_values);
+        std::cout << "bitlength " << (int) bitLength << std::endl;
+        return (num_values * bitLength + 7) / 8 + 6 + ParquetUtils::GetVarintSize(num_values << 1) + ParquetUtils::GetVarintSize(((num_values + 7 )/ 8) << 1 | 1);
     }
 
     [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr, bool isDictionary, bool isDictEncoded) const {
@@ -97,22 +99,29 @@ class LazilyTransformedFile final : public VirtualizedFile {
         return dataSize + ParquetUtils::writePageWithoutData(dataSize, num_unique_values, true).size();
     }
 
-    void writeChunk(int64_t chunkBegin, int64_t chunkEnd, S3InterfaceUtils::ByteRange byteRange, const std::shared_ptr<arrow::Array>& arr, size_t &offset, bool isDictionaryPage, size_t uncompressed_size) {
+    void  writeChunk(int64_t chunkBegin, int64_t chunkEnd, S3InterfaceUtils::ByteRange byteRange, const std::shared_ptr<arrow::Array>& arr, size_t &offset, bool isDictionaryPage, size_t uncompressed_size, uint64_t unique_values = 0) {
         if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
-            int64_t begin = std::max(chunkBegin, byteRange.begin);
-            int64_t end = std::min(chunkEnd, byteRange.end);
+            const int64_t begin = std::max(chunkBegin, byteRange.begin);
+            const int64_t end = std::min(chunkEnd, byteRange.end);
             // should not be needed, but warns if a reader does something unexpected
             assert(begin == chunkBegin);
             assert(end == chunkEnd);
 
             curr_buffer.resize(uncompressed_size);
 
-            const bool isDictionaryEncoded = arrow::is_dictionary(arr->type_id());
-            ColumnChunkWriter::writeColumnChunk(
-                ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage, isDictionaryEncoded), arr->length(),
-                    isDictionaryPage, isDictionaryEncoded),
-                isDictionaryEncoded ? std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices() : arr,
-                curr_buffer);
+            if (arrow::is_dictionary(arr->type_id())) {
+                uint8_t bitLength = std::bit_width(unique_values);
+                ColumnChunkWriter::writeDictionaryEncodedChunk(
+                    ParquetUtils::writePageWithoutData(getDictEncodedDataSize(arr->length(), unique_values),
+                    arr->length(), false, true, bitLength),
+                    std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices(), curr_buffer, bitLength, 0);
+            } else {
+                ColumnChunkWriter::writeColumnChunk(
+                ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage, false),
+                    arr->length(), isDictionaryPage, false),
+                    arr, curr_buffer);
+            }
+
             assert(begin - chunkBegin >= 0);
             assert(begin - chunkBegin < curr_buffer.size());
             assert(end + 1 - chunkBegin >= 0);
@@ -125,7 +134,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     }
 
 public:
-    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 16) :
+    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 1) :
             directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path),
             columnReaders([path, this]() {
                 std::vector<btrblocks::arrow::ColumnStreamReader> localReaders;
@@ -174,6 +183,7 @@ public:
                 uint64_t dictionary_length = 0;
                 auto& initial_info = getChunkInfo(i, j);
                 uint64_t min = initial_info.min_value, max = initial_info.max_value;
+                // collect statistics
                 for (int chunk = 0; chunk != combinedChunks && i+chunk < metadata->num_chunks; chunk++){
                     const int chunkI = i + chunk;
                     auto& chunk_info = getChunkInfo(chunkI, j);
@@ -182,8 +192,16 @@ public:
                     if (chunk_info.unique_tuple_count > 0 && chunk_info.unique_tuple_count < 1000) {
                         dictionary_count += chunk_info.unique_tuple_count;
                         dictionary_length += chunk_info.total_unique_length;
-                        const uint64_t dataSize = getDictEncodedDataSize(chunk_info.tuple_count);
-                        uncompressedSizes[j][chunkI] += chunk_info.tuple_count * sizeof(int32_t) +
+                    }
+                }
+
+                // predict chunk sizes
+                for (int chunk = 0; chunk != combinedChunks && i+chunk < metadata->num_chunks; chunk++) {
+                    const int chunkI = i + chunk;
+                    auto& chunk_info = getChunkInfo(chunkI, j);
+                    if (chunk_info.unique_tuple_count > 0 && chunk_info.unique_tuple_count < 1000) {
+                        const uint64_t dataSize = getDictEncodedDataSize(chunk_info.tuple_count, dictionary_count);
+                        uncompressedSizes[j][chunkI] = dataSize +
                             ParquetUtils::writePageWithoutData(dataSize, chunk_info.tuple_count, false, true).size();
                     }else {
                         uncompressedSizes[j][chunkI] = getSize(chunkI, j);
@@ -278,8 +296,7 @@ public:
                     for (int chunk=0; chunk!=combinedChunks_ && i+chunk<metadata->num_chunks; chunk++) {
                         const int chunkI = i + chunk;
                         int64_t chunkEnd = chunkBegin + uncompressedSizes[j][chunkI] - 1;
-
-                        writeChunk(chunkBegin, chunkEnd, byteRange, arrays[chunkI - i], offset, false, uncompressedSizes[j][chunkI]);
+                        writeChunk(chunkBegin, chunkEnd, byteRange, arrays[chunkI - i], offset, false, uncompressedSizes[j][chunkI], dictionaryArr->length());
                         // Prepare next chunk
                         chunkBegin += uncompressedSizes[j][chunkI];
                     }

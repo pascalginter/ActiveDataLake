@@ -27,9 +27,33 @@ class ColumnChunkWriter {
         }
     }
 public:
+    static void writeDictionaryEncodedChunk(const std::vector<uint8_t>& header,
+                                            const std::shared_ptr<arrow::Array>& array,
+                                            std::vector<uint8_t>& vec,
+                                            const uint8_t bitLength,
+                                            const int32_t offset) {
+        const auto* data = reinterpret_cast<const int32_t *>(array->data()->buffers[1]->data());
+        const uint64_t n = array->length();
+        memcpy(vec.data(), header.data(), header.size());
+        memset(vec.data() + header.size(), 0, bitLength * (n + 7) / 8);
+
+        int64_t currentByte = header.size();
+        uint8_t currBit = 0;
+        for (int i=0; i!=n; i++) {
+            for (int j=0; j!=bitLength; j++) {
+                vec[currentByte] |= (((data[i] + offset) & (1 << j)) >> j) << currBit;
+                currBit++;
+                if (currBit == 8) {
+                    currBit = 0;
+                    currentByte++;
+                }
+            }
+        }
+    }
+
     static void writeColumnChunk(const std::vector<uint8_t>& header,
-                                                 const std::shared_ptr<arrow::Array>& array,
-                                                 std::vector<uint8_t>& vec) {
+                                 const std::shared_ptr<arrow::Array>& array,
+                                 std::vector<uint8_t>& vec) {
         if (array->type() == arrow::int32()) {
             return writeNumericColumnChunk<int32_t>(header, array, vec);
         }
