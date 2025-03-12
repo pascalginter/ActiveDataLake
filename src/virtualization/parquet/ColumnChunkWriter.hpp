@@ -35,19 +35,32 @@ public:
         const auto* data = reinterpret_cast<const int32_t *>(array->data()->buffers[1]->data());
         const uint64_t n = array->length();
         memcpy(vec.data(), header.data(), header.size());
-        memset(vec.data() + header.size(), 0, vec.size() - header.size());
+        size_t currentByte = header.size();
+        uint64_t bitBuffer = 0;
+        int bitsInBuffer = 0;
 
-        int64_t currentByte = header.size();
-        uint8_t currBit = 0;
-        for (int i=0; i!=n; i++) {
-            for (int j=0; j!=bitLength; j++) {
-                vec[currentByte] |= (((data[i] + offset) & (1 << j)) >> j) << currBit;
-                currBit++;
-                if (currBit == 8) {
-                    currBit = 0;
-                    currentByte++;
-                }
+        // Create a mask to ensure we only pack the lower 'bitLength' bits.
+        const uint32_t mask = (bitLength == 32 ? 0xFFFFFFFFu : ((1u << bitLength) - 1));
+
+        for (uint64_t i = 0; i < n; i++) {
+            // Compute the value to pack.
+            uint32_t v = static_cast<uint32_t>(data[i] + offset) & mask;
+
+            // Append v's bits into the buffer.
+            bitBuffer |= (static_cast<uint64_t>(v) << bitsInBuffer);
+            bitsInBuffer += bitLength;
+
+            // Flush full bytes from the buffer.
+            while (bitsInBuffer >= 8) {
+                vec[currentByte++] = static_cast<uint8_t>(bitBuffer & 0xFF);
+                bitBuffer >>= 8;
+                bitsInBuffer -= 8;
             }
+        }
+
+        // Flush any remaining bits.
+        if (bitsInBuffer > 0) {
+            vec[currentByte++] = static_cast<uint8_t>(bitBuffer & 0xFF);
         }
     }
 
