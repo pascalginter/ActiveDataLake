@@ -35,7 +35,7 @@ public:
         const auto* data = reinterpret_cast<const int32_t *>(array->data()->buffers[1]->data());
         const uint64_t n = array->length();
         memcpy(vec.data(), header.data(), header.size());
-        memset(vec.data() + header.size(), 0, bitLength * (n + 7) / 8);
+        memset(vec.data() + header.size(), 0, vec.size() - header.size());
 
         int64_t currentByte = header.size();
         uint8_t currBit = 0;
