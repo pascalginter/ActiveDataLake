@@ -41,7 +41,8 @@ public:
     static std::vector<uint8_t> writePageWithoutData(uint64_t uncompressed_size,
                                                      uint64_t num_values,
                                                      bool isDictionaryPage = false,
-                                                     bool isDictionaryEncoded = false){
+                                                     bool isDictionaryEncoded = false,
+                                                     uint8_t bitWidth = 0){
         // Declare data page
         std::vector<uint8_t> result{NEXT_INTEGER_FIELD, GetZigZag(isDictionaryPage ? DICTIONARY_PAGE : DATA_PAGE_V1)};
         result.reserve(40);
@@ -85,7 +86,7 @@ public:
         }
         if (isDictionaryEncoded) {
             // bit width
-            result.push_back(32);
+            result.push_back(bitWidth);
             assert(num_values & 7 == 0);
             appendZigZagVarint(result, ((num_values + 7) / 8) << 1 | 1);
         }
