@@ -30,37 +30,16 @@ public:
     static void writeDictionaryEncodedChunk(const std::vector<uint8_t>& header,
                                             const std::shared_ptr<arrow::Array>& array,
                                             std::vector<uint8_t>& vec,
-                                            const uint8_t bitLength,
+                                            const uint8_t byteLength,
                                             const int32_t offset) {
-        const auto* data = reinterpret_cast<const int32_t *>(array->data()->buffers[1]->data());
+        assert(byteLength == 1);
+        const auto* data = reinterpret_cast<const uint8_t *>(array->data()->buffers[1]->data());
         const uint64_t n = array->length();
         memcpy(vec.data(), header.data(), header.size());
-        size_t currentByte = header.size();
-        uint64_t bitBuffer = 0;
-        int bitsInBuffer = 0;
 
-        // Create a mask to ensure we only pack the lower 'bitLength' bits.
-        const uint32_t mask = (bitLength == 32 ? 0xFFFFFFFFu : ((1u << bitLength) - 1));
-
-        for (uint64_t i = 0; i < n; i++) {
-            // Compute the value to pack.
-            uint32_t v = static_cast<uint32_t>(data[i] + offset) & mask;
-
-            // Append v's bits into the buffer.
-            bitBuffer |= (static_cast<uint64_t>(v) << bitsInBuffer);
-            bitsInBuffer += bitLength;
-
-            // Flush full bytes from the buffer.
-            while (bitsInBuffer >= 8) {
-                vec[currentByte++] = static_cast<uint8_t>(bitBuffer & 0xFF);
-                bitBuffer >>= 8;
-                bitsInBuffer -= 8;
-            }
-        }
-
-        // Flush any remaining bits.
-        if (bitsInBuffer > 0) {
-            vec[currentByte++] = static_cast<uint8_t>(bitBuffer & 0xFF);
+        size_t off = header.size();
+        for (int i=0; i!=n; i++) {
+            vec[off + i] = data[4 * i];
         }
     }
 

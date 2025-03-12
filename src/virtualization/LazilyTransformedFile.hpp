@@ -68,12 +68,12 @@ class LazilyTransformedFile final : public VirtualizedFile {
     }
 
     [[nodiscard]] uint64_t getDictEncodedDataSize(uint64_t num_values, uint64_t num_unique_values) {
-        uint8_t bitLength = std::bit_width(num_unique_values);
-        std::cout << "bitlength " << (int) bitLength << std::endl;
-        return (num_values * bitLength + 7) / 8 + 6 + ParquetUtils::GetVarintSize(num_values << 1) + ParquetUtils::GetVarintSize(((num_values + 7 )/ 8) << 1 | 1);
+        uint8_t byteLength = (std::bit_width(num_unique_values) + 7) / 8;
+        std::cout << "byteLength " << (int) byteLength << std::endl;
+        return num_values * byteLength + 6 + ParquetUtils::GetVarintSize(num_values << 1) + ParquetUtils::GetVarintSize(((num_values + 7 )/ 8) << 1 | 1);
     }
 
-    [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr, bool isDictionary, bool isDictEncoded) const {
+    [[nodiscard]] uint64_t getDataSize(const std::shared_ptr<arrow::Array>& arr, bool isDictionary) const {
         uint64_t result;
         if (isDictionary || arr->type() == arrow::utf8()) {
             int64_t tuple_count = arr->data()->length;
@@ -83,7 +83,6 @@ class LazilyTransformedFile final : public VirtualizedFile {
             result = arr->length() * arr->type()->byte_width();
         }
         if (isDictionary) return result;
-        if (isDictEncoded) result += 1 + ParquetUtils::GetVarintSize(((arr->length() + 7 )/ 8) << 1 | 1);
         return result + 5 + ParquetUtils::GetVarintSize(arr->length() << 1);
     }
 
@@ -110,11 +109,11 @@ class LazilyTransformedFile final : public VirtualizedFile {
             curr_buffer.resize(uncompressed_size);
 
             if (arrow::is_dictionary(arr->type_id())) {
-                const uint8_t bitLength = std::bit_width(unique_values);
+                const uint8_t byteLength = (std::bit_width(unique_values) + 7) / 8;
                 ColumnChunkWriter::writeDictionaryEncodedChunk(
                     ParquetUtils::writePageWithoutData(getDictEncodedDataSize(arr->length(), unique_values),
-                    arr->length(), false, true, bitLength),
-                    std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices(), curr_buffer, bitLength, 0);
+                    arr->length(), false, true, byteLength),
+                    std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices(), curr_buffer, byteLength, 0);
             } else {
                 ColumnChunkWriter::writeColumnChunk(
                 ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage, false),
@@ -134,7 +133,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     }
 
 public:
-    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 5) :
+    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 16) :
             directoryReader(path), metadata(directoryReader.metadata()), combinedChunks_(combinedChunks), path(path),
             columnReaders([path, this]() {
                 std::vector<btrblocks::arrow::ColumnStreamReader> localReaders;
