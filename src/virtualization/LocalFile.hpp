@@ -34,15 +34,14 @@ public:
         close(file);
     }
 
-    const char* begin() const{
+    [[nodiscard]] const char* begin() const{
         return static_cast<char*>(data);
     }
 
-    const char* end() const {
+    [[nodiscard]] const char* end() const {
         return  static_cast<char*>(data) + size;
     }
 };
-
 
 class LocalFile final : public VirtualizedFile {
     static thread_local std::shared_ptr<std::string> result;
