@@ -104,19 +104,25 @@ class LazilyTransformedFile final : public VirtualizedFile {
             assert(begin == chunkBegin);
             assert(end == chunkEnd);
 
-            curr_buffer.resize(uncompressed_size);
+            bool fast_path = begin == chunkBegin && end == chunkEnd;
+            char* vec;
+            if (fast_path) [[likely]] {
+                vec = buffer.data() + offset;
+            }else {
+                curr_buffer.resize(uncompressed_size);
+            }
 
             if (arrow::is_dictionary(arr->type_id())) {
                 const uint8_t byteLength = (std::bit_width(unique_values) + 7) / 8;
                 ColumnChunkWriter::writeDictionaryEncodedChunk(
                     ParquetUtils::writePageWithoutData(getDictEncodedDataSize(arr->length(), unique_values),
                     arr->length(), false, true, byteLength),
-                    std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices(), curr_buffer, byteLength, 0);
+                    std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices(), buffer.data() + offset, byteLength, 0);
             } else {
                 ColumnChunkWriter::writeColumnChunk(
                 ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage),
                     arr->length(), isDictionaryPage, false),
-                    arr, curr_buffer);
+                    arr, buffer.data() + offset);
             }
 
             assert(begin - chunkBegin >= 0);
@@ -124,7 +130,9 @@ class LazilyTransformedFile final : public VirtualizedFile {
             assert(end + 1 - chunkBegin >= 0);
             assert(end + 1 - chunkBegin <= curr_buffer.size());
             assert(offset + end - begin + 1 <= buffer.size());
-            memcpy(buffer.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
+            if (!fast_path) {
+                memcpy(buffer.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
+            }
             assert(curr_buffer.size() >= end - begin + 1);
             offset += end - begin + 1;
         }
