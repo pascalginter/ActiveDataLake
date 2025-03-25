@@ -38,11 +38,12 @@ include(cmake/arrow.cmake)
 include(cmake/btrblocks.cmake)
 include(cmake/croaring.cmake)
 include(cmake/oatpp.cmake)
+include(cmake/pqxx.cmake)
 
 # ---------------------------------------------------------------------------
 # Components
 # ---------------------------------------------------------------------------
-add_executable(ActiveDataLake src/App.cpp src/virtualization/VirtualizedFile.cpp)
+add_executable(ActiveDataLake src/App.cpp src/virtualization/VirtualizedFile.cpp src/controller/Iceberg/DataController.cpp)
 target_link_libraries(ActiveDataLake PRIVATE
         oatpp
         btrblocks
@@ -53,6 +54,8 @@ target_link_libraries(ActiveDataLake PRIVATE
         libaws-cpp-sdk-core
         libaws-cpp-sdk-s3-crt
         libaws-cpp-sdk-s3
+        pqxx
+        pq
 )
 
 # ---------------------------------------------------------------------------
