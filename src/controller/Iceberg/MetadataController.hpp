@@ -2,17 +2,11 @@
 #define ICEBERG_METADATA_CONTROLLER_HPP
 
 #include <fstream>
-#include <sys/mman.h>
 #include <sys/types.h>
-#include <sys/stat.h>
-#include <fstream>
+
 #include <iostream>
 
-#include <arrow/io/api.h>
-#include <parquet/arrow/writer.h>
-
 #include <btrblocks/arrow/DirectoryReader.hpp>
-#include <btrblocks.hpp>
 
 #include "oatpp/web/server/api/ApiController.hpp"
 #include "oatpp/json/ObjectMapper.hpp"
@@ -26,13 +20,17 @@
 #include "avro_headers/manifest_file.hpp"
 #include "avro_headers/manifest_list.hpp"
 
+#include <pqxx/pqxx>
+
 #include OATPP_CODEGEN_BEGIN(ApiController) //<- Begin Codegen
 
 #include "oatpp/json/Serializer.hpp"
 
 #include "../../dto/IcebergMetadataDto.hpp"
 
-class IcebergMetadataController : public oatpp::web::server::api::ApiController {
+class IcebergMetadataController final : public oatpp::web::server::api::ApiController {
+    static thread_local pqxx::connection conn;
+    ;
 public:
     explicit IcebergMetadataController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
             : oatpp::web::server::api::ApiController(apiContentMappers)
@@ -40,10 +38,32 @@ public:
 
     std::string buffer;
 
-    void prepareMetadata(){
-        IcebergMetadataDto::Wrapper metadata = IcebergMetadataDto::createShared();
-        metadata->schemas->push_back(IcebergSchemaDto::createShared());
-        metadata->snapshots->push_back(IcebergSnapshotDto::createShared());
+    void prepareMetadata(const std::string& tableName){
+        pqxx::work tx(conn);
+        const pqxx::row table = tx.exec(""
+                                  "SELECT table_uuid, last_sequence_number, last_updated_ms, current_snapshot_id"
+                                  "FROM table"
+                                  "WHERE name = $1", pqxx::params{tableName}
+        ).one_row();
+        const IcebergMetadataDto::Wrapper metadata = IcebergMetadataDto::createShared();
+        metadata->tableUUID = table[0].as<std::string>();
+        metadata->lastSequenceNumber = table[1].as<int>();
+        metadata->lastUpdatedMs = table[2].as<int>();
+        metadata->currentSnapshotId = table[3].as<int>();
+
+        for (const auto& [snapshotId, sequenceNumber, timestampMs, manifestList, summaryOperation] :
+            tx.query<int, int, int, std::string, std::string>(""
+                "SELECT snapshot_id, sequence_number, timestamp_ms, manifest_list, summary_operation "
+                "FROM table"
+                "WHERE table_name = $1", pqxx::params{tableName})) {
+            auto dto = IcebergSnapshotDto::createShared();
+            dto->snapshotId = snapshotId;
+            dto->sequenceNumber = sequenceNumber;
+            dto->timestampMs = timestampMs;
+            dto->summary->operation = summaryOperation;
+            metadata->snapshots->push_back(dto);
+        }
+        tx.commit();
         buffer = objectMapper.writeToString(metadata);
     }
 
@@ -121,7 +141,7 @@ public:
              PATH(String, fileName)) {
         assert(fileName->ends_with(".json"));
         std::cout << "head metadata" << std::endl;
-        prepareMetadata();
+        prepareMetadata(fileName);
         return respondWithBufferSize();
     }
 
@@ -145,8 +165,8 @@ public:
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
         std::cout << "get metadata" << std::endl;
-        prepareMetadata();
-        auto range = S3InterfaceUtils::extractRange(request, buffer.size());
+        prepareMetadata(fileName);
+        const auto range = S3InterfaceUtils::extractRange(request, buffer.size());
         std::cout << range.begin << " " << range.end << " (of " << buffer.size() << ")" << std::endl;
         return createResponse(Status::CODE_200, buffer);
     }

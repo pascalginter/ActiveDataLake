@@ -6,7 +6,6 @@
 #include <sys/stat.h>
 
 #include <arrow/io/api.h>
-#include <parquet/arrow/writer.h>
 
 #include <btrblocks/arrow/DirectoryReader.hpp>
 #include <btrblocks.hpp>
@@ -17,6 +16,8 @@
 #include "oatpp/macro/codegen.hpp"
 #include "oatpp/macro/component.hpp"
 
+
+
 #include "pqxx/pqxx"
 
 #include OATPP_CODEGEN_BEGIN(ApiController) //<- Begin Codegen
@@ -24,13 +25,16 @@
 #include "oatpp/json/Serializer.hpp"
 
 #include "../../virtualization/VirtualizedFile.hpp"
+#include "../../virtualization/PostgresBufferedFile.hpp"
 
-class DataController : public oatpp::web::server::api::ApiController {
+class DataController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
+    PostgresBufferedFile pbf;
 public:
     explicit DataController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
-            : oatpp::web::server::api::ApiController(apiContentMappers)
-    {}
+        : oatpp::web::server::api::ApiController(apiContentMappers), pbf("") {
+    }
+
 private:
     oatpp::json::ObjectMapper objectMapper;
     std::unordered_map<std::string, std::shared_ptr<VirtualizedFile>> tableFiles;
@@ -46,7 +50,7 @@ public:
     ENDPOINT("HEAD", "/data/{fileName}", headData,
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
-        std::string_view fileNameView(fileName->c_str());
+        const std::string_view fileNameView(*fileName);
         if (!fileNameView.ends_with(".parquet")){
             return createResponse(Status::CODE_501, "File format is not supported");
         }
@@ -66,12 +70,12 @@ public:
     ENDPOINT("GET", "/data/{fileName}", getData,
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
-        std::string_view fileNameView(fileName->c_str());
+        const std::string_view fileNameView(*fileName);
         if (!fileNameView.ends_with(".parquet")){
             return createResponse(Status::CODE_501, "File format is not supported");
         }
-        std::string tableName(fileNameView.begin(), fileName->size() - 8);
-        if (tableFiles.find(tableName) == tableFiles.end()){
+        const std::string tableName(fileNameView.begin(), fileName->size() - 8);
+        if (!tableFiles.contains(tableName)){
             tableFiles[tableName] = VirtualizedFile::createFileAbstraction(tableName);
         }
 
@@ -81,13 +85,24 @@ public:
         return response;
     }
 
-    ENDPOINT("HEAD", "/data/{tableName}/{fileName}", headNewData) {
-        std::cout << "head request" << std::endl;
-        std::cout << "------------------------------------------------" << std::endl;
+    ENDPOINT("HEAD", "/data/{tableName}/{fileName}", headNewData,
+            REQUEST(std::shared_ptr<IncomingRequest>, request),
+            PATH(String, tableName),
+            PATH(String, fileName)) {
+        std::cout << "beginning of time" << std::endl;
+        std::cout << fileName.getValue("") << std::endl;
+        if (fileName == "buffered.parquet") {
+            auto response = createResponse(Status::CODE_200, "");
+            S3InterfaceUtils::putByteSizeHeader(response, pbf.size());
+            return response;
+        }
         return createResponse(Status::CODE_404, "");
     }
 
-    ENDPOINT("DELETE", "/data/{tableName}/{fileName", deleteData) {
+    ENDPOINT("DELETE", "/data/{tableName}/{fileName}", deleteData,
+            REQUEST(std::shared_ptr<IncomingRequest>, request),
+            PATH(String, tableName),
+            PATH(String, fileName)) {
         std::cout << "delete request" << std::endl;
         std::cout << "------------------------------------------------" << std::endl;
         return createResponse(Status::CODE_200, "");
@@ -100,31 +115,38 @@ public:
         pqxx::work tx{conn};
         std::cout << "put matched" << std::endl;
         auto parameters = request->getQueryParameters().getAll();
-        for (const auto& [key, value] : parameters) {
-            std::cout << key.std_str() << " | " << value.std_str() << std::endl;
-        }
-        oatpp::data::share::StringKeyLabel label("partNumber");
+        const oatpp::data::share::StringKeyLabel label("partNumber");
         assert(parameters.contains(label));
         int partId;
-        auto a = parameters.equal_range(label);
-        for (auto b = a.first; b != a.second; ++b) {
-            std::cout << b->second.std_str() << std:: endl;
+        const auto [fst, snd] = parameters.equal_range(label);
+        for (auto b = fst; b != snd; ++b) {
             partId = atoi(b->second.std_str().c_str());
         }
         try {
             const auto content = request->readBodyToString();
             pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
 
-            tx.exec("INSERT INTO BufferedData VALUES ($1, $2, $3)",
-                pqxx::params{0, partId, bin_str});
+            tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
+                pqxx::params{0, partId, bin_str, bin_str.size()});
             tx.commit();
-            auto response =  createResponse(Status::CODE_200, "");
+            auto response = createResponse(Status::CODE_200, "");
             response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
+
             return response;
-        }catch (std::exception e) {
+        }catch (const std::exception& e) {
             std::cout << e.what() << std::endl;
             return createResponse(Status::CODE_500, "");
         }
+    }
+
+    ENDPOINT("GET", "/data/{tableName}/{fileName}", getBufferedData,
+            REQUEST(std::shared_ptr<IncomingRequest>, request),
+            PATH(String, tableName),
+            PATH(String, fileName)) {
+        const auto range = S3InterfaceUtils::extractRange(request, pbf.size());
+        std::cout << range.begin << " " << range.end << std::endl;
+        const auto response = pbf.getRange(range);
+        return createResponse(Status::CODE_200, response);
     }
 
     ENDPOINT("POST", "/data/{tableName}/{fileName}", postData,

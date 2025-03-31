@@ -43,7 +43,7 @@ include(cmake/pqxx.cmake)
 # ---------------------------------------------------------------------------
 # Components
 # ---------------------------------------------------------------------------
-add_executable(ActiveDataLake src/App.cpp src/virtualization/VirtualizedFile.cpp src/controller/Iceberg/DataController.cpp)
+add_executable(ActiveDataLake src/App.cpp src/virtualization/VirtualizedFile.cpp src/controller/Iceberg/Controller.cpp)
 target_link_libraries(ActiveDataLake PRIVATE
         oatpp
         btrblocks

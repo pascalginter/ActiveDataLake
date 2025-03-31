@@ -5,12 +5,13 @@
 #include "LazilyTransformedFile.hpp"
 #include "RemoteFile.hpp"
 #include "PrefetchFile.hpp"
+#include "PostgresBufferedFile.hpp"
 
 #define LAZY_COMPUTATION true
 #define PREFETCH true
 
 std::shared_ptr<VirtualizedFile> VirtualizedFile::createFileAbstraction(std::string tableName) {
-    std::string localPathPrefix = "../data/";
+    const std::string localPathPrefix = "../data/";
     if (std::filesystem::exists(localPathPrefix + tableName + ".parquet")) {
         return std::make_shared<LocalFile>(localPathPrefix + tableName + ".parquet");
     }
@@ -23,6 +24,7 @@ std::shared_ptr<VirtualizedFile> VirtualizedFile::createFileAbstraction(std::str
             return std::make_shared<MemoryBufferedTransformedFile>(localPathPrefix + tableName);
         }
     }
+    return nullptr;
     if constexpr (PREFETCH) {
         return std::make_shared<PrefetchFile>(tableName);
     } else {
@@ -38,7 +40,10 @@ thread_local std::vector<uint8_t> LazilyTransformedFile::curr_buffer = {};
 thread_local std::shared_ptr<std::string> LocalFile::result = std::make_shared<std::string>();
 
 thread_local std::shared_ptr<std::string> RemoteFile::result = std::make_shared<std::string>();
-thread_local Aws::S3::S3Client RemoteFile::client = {};
 
-thread_local Aws::S3Crt::S3CrtClient PrefetchFile::client = {};
+thread_local std::shared_ptr<std::string> PostgresBufferedFile::result = std::make_shared<std::string>();
+thread_local pqxx::connection PostgresBufferedFile::conn =
+    pqxx::connection{"postgresql://pascal-ginter@localhost/iceberg"};;
+std::shared_ptr<arrow::Buffer> PostgresBufferedFile::buffer = nullptr;
+
 std::shared_ptr<std::string> PrefetchFile::result = std::make_shared<std::string>("");

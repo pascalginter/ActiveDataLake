@@ -11,6 +11,7 @@
 #include "../../dto/IcebergRestDtos/LoadTableResponseDto.hpp"
 
 class IcebergCatalogController : public oatpp::web::server::api::ApiController {
+    static thread_local pqxx::connection conn;
 public:
     explicit IcebergCatalogController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
             : oatpp::web::server::api::ApiController(apiContentMappers)
@@ -47,9 +48,13 @@ public:
     ENDPOINT("GET", "/v1/namespaces/{nspace}/tables", listTables,
              PATH(String, nspace)){
         std::cout << "List tables " << nspace->c_str() << std::endl;
-        auto responseDto = ListTablesResponseDto::createShared();
-        responseDto->identifiers->push_back(TableIdentifierDto::createShared());
-        std::cout << objectMapper.writeToString(responseDto)->c_str() << std::endl;
+        const auto responseDto = ListTablesResponseDto::createShared();
+        pqxx::work tx{conn};
+        for (const auto& [name] : tx.query<std::string>("SELECT name FROM table")) {
+            responseDto->identifiers->push_back(TableIdentifierDto::createShared());
+            responseDto->identifiers->back()->name = name;
+        }
+        tx.commit();
         return createDtoResponse(Status::CODE_200, responseDto);
     }
 

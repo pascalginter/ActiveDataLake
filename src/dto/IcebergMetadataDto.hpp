@@ -28,7 +28,7 @@ class IcebergMetadataDto : public oatpp::DTO {
     DTO_FIELD(Int32, lastPartitionId, "last-partition-id") = 0;
     // properties (optional)
     DTO_FIELD(Int64, currentSnapshotId, "current-snapshot-id") = 0l;
-    DTO_FIELD(List<Object<IcebergSnapshotDto>>, snapshots, "snapshots") = {IcebergSnapshotDto::createShared()};
+    DTO_FIELD(List<Object<IcebergSnapshotDto>>, snapshots, "snapshots") = {};
     // snapshot-log (optional)
     // metadata-log (optional)
     DTO_FIELD(List<Object<IcebergSortOrderDto>>, sortOrders, "sort-orders") = {IcebergSortOrderDto::createShared()};
