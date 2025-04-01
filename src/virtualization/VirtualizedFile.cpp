@@ -44,6 +44,5 @@ thread_local std::shared_ptr<std::string> RemoteFile::result = std::make_shared<
 thread_local std::shared_ptr<std::string> PostgresBufferedFile::result = std::make_shared<std::string>();
 thread_local pqxx::connection PostgresBufferedFile::conn =
     pqxx::connection{"postgresql://pascal-ginter@localhost/iceberg"};;
-std::shared_ptr<arrow::Buffer> PostgresBufferedFile::buffer = nullptr;
 
 std::shared_ptr<std::string> PrefetchFile::result = std::make_shared<std::string>("");

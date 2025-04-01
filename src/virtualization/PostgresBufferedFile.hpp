@@ -18,10 +18,8 @@ class PostgresBufferedFile final : public VirtualizedFile {
 
     std::size_t size_;
 public:
-    explicit PostgresBufferedFile(const std::string& p) {
-        std::cout << "created postgres buffered file" << std::endl;
-        pqxx::work tx(conn);
 
+    static std::shared_ptr<arrow::Table> getCombinedTable(pqxx::work& tx) {
         // Prepare buffers to load data
         std::unordered_map<int, std::shared_ptr<arrow::Buffer>> rebuildFiles;
         for (const auto& [fileId, size] :
@@ -32,8 +30,6 @@ public:
         // Populate buffers with data
         for (const auto& [fileId, fileOffset, size, content] :
                 tx.query<int, int, int, std::basic_string<std::byte>>("Select file_id, file_offset, size, content FROM bufferedView")) {
-            std::cout << fileId << " " << size << std::endl;
-            std::cout << "a " << content.c_str() << std::endl;
             memcpy(rebuildFiles[fileId]->mutable_data() + fileOffset, content.data(), size);
         }
 
@@ -47,15 +43,26 @@ public:
             if (!status.ok()) {
                 std::cout << status << std::endl;
             }
-            std::cout << parquet_reader << std::endl;
             std::shared_ptr<arrow::Table> table;
             PARQUET_THROW_NOT_OK(parquet_reader->ReadTable(&table));
-            std::cout << table->ToString() << std::endl;
             tables.push_back(table);
         }
+        if (tables.empty()) {
+            return nullptr;
+        }
+        return arrow::ConcatenateTables(tables).ValueOrDie();
+    }
 
-        const auto combinedTable = arrow::ConcatenateTables(tables).ValueOrDie();
+    explicit PostgresBufferedFile(const std::string& p) {
+        std::cout << "created postgres buffered file" << std::endl;
+        pqxx::work tx(conn);
 
+
+        auto combinedTable = getCombinedTable(tx);
+        if (combinedTable == nullptr) {
+            size_ = 0;
+            return;
+        }
         // Write table to buffer
         const auto out = arrow::io::BufferOutputStream::Create().ValueOrDie();
         PARQUET_THROW_NOT_OK(parquet::arrow::WriteTable(*combinedTable, arrow::default_memory_pool(), out));

@@ -23,13 +23,16 @@
 #include OATPP_CODEGEN_BEGIN(ApiController) //<- Begin Codegen
 
 #include "oatpp/json/Serializer.hpp"
+#include <oatpp/async/Executor.hpp>
 
 #include "../../virtualization/VirtualizedFile.hpp"
 #include "../../virtualization/PostgresBufferedFile.hpp"
+#include "EvictionJob.hpp"
 
 class DataController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
     PostgresBufferedFile pbf;
+    oatpp::async::Executor executor{1};
 public:
     explicit DataController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
         : oatpp::web::server::api::ApiController(apiContentMappers), pbf("") {
@@ -40,7 +43,6 @@ private:
     std::unordered_map<std::string, std::shared_ptr<VirtualizedFile>> tableFiles;
 
 public:
-
     static std::shared_ptr<DataController> createShared(
             OATPP_COMPONENT(std::shared_ptr<oatpp::web::mime::ContentMappers>, apiContentMappers) // Inject ContentMappers
     ){
@@ -126,8 +128,11 @@ public:
             const auto content = request->readBodyToString();
             pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
 
+            auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
+
             tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
-                pqxx::params{0, partId, bin_str, bin_str.size()});
+                pqxx::params{fileId, partId, bin_str, bin_str.size()});
+            tx.exec("UPDATE BufferedFiles SET size = size + $1 WHERE file_id = $2", pqxx::params{bin_str.size(), fileId});
             tx.commit();
             auto response = createResponse(Status::CODE_200, "");
             response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
@@ -154,26 +159,34 @@ public:
              PATH(String, tableName),
              PATH(String, fileName)){
         std::cout << fileName->c_str() << std::endl;
+        const auto& params = request->getQueryParameters().getAll();
+        const oatpp::data::share::StringKeyLabel label("uploadId");
 
-        for (const auto& [key, value] : request->getQueryParameters().getAll()) {
-            std::cout << key.std_str() << " | " << value.std_str() << std::endl;
+        pqxx::work tx{conn};
+        if (!params.contains(label)) {
+            // initiate a multipart upload
+            tx.exec("INSERT INTO BufferedFiles(file_name, finalized, size) VALUES ($1, $2, $3)",
+                pqxx::params{*fileName, false, 0});
+            tx.commit();
+
+            std::string result = "<InitiateMultipartUploadResult>\n";
+            result += "<Bucket>" + tableName + "</Bucket>\n";
+            result += "<Key>" + fileName + "</Key>\n";
+            result += "<UploadId>" + std::string("EXAMPLEJZ6e0YupT2h66iePQCc9IEbYbDUy4RTpMeoSMLPRe") + "</UploadId>\n";
+            result += "</InitiateMultipartUploadResult>\n";
+
+            auto response = createResponse(Status::CODE_200, result);
+            return response;
+        } else {
+            // finalize a multipart upload
+            tx.exec("UPDATE BufferedFiles SET finalized = true WHERE file_name = $1", pqxx::params{*fileName});
+            tx.commit();
+            executor.execute<EvictionJob>();
+            return createResponse(Status::CODE_200, "");
         }
 
-        //// Print headers
-        for (const auto& [key, value] : request->getHeaders().getAll()) {
-            std::cout << key.std_str() << " | " << value.std_str() << std::endl;
-        }
-        std::cout << "------------------------------------------------" << std::endl;
 
 
-        std::string result = "<InitiateMultipartUploadResult>\n";
-        result += "<Bucket>" + tableName + "</Bucket>\n";
-        result += "<Key>" + fileName + "</Key>\n";
-        result += "<UploadId>" + std::string("EXAMPLEJZ6e0YupT2h66iePQCc9IEbYbDUy4RTpMeoSMLPRe") + "</UploadId>\n";
-        result += "</InitiateMultipartUploadResult>\n";
-
-        auto response = createResponse(Status::CODE_200, result);
-        return response;
     }
 };
 
