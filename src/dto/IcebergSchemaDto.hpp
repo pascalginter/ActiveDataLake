@@ -11,7 +11,7 @@
 class IcebergSchemaDto : public IcebergStructTypeDto {
     DTO_INIT(IcebergSchemaDto, IcebergStructTypeDto);
 
-    DTO_FIELD(Int32, schemaId, "schemaId") = 0;
+    DTO_FIELD(Int32, schemaId, "schema-id") = 0;
     // 1 optional field
 };
 

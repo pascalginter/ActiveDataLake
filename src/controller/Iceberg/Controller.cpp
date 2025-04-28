@@ -10,3 +10,4 @@ thread_local pqxx::connection IcebergCatalogController::conn =
     pqxx::connection{"postgresql://pascal-ginter@localhost/iceberg"};
 thread_local pqxx::connection EvictionJob::conn =
     pqxx::connection{"postgresql://pascal-ginter@localhost/iceberg"};
+int EvictionJob::counter = 0;

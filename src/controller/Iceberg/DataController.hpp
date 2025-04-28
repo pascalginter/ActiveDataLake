@@ -81,7 +81,8 @@ public:
             tableFiles[tableName] = VirtualizedFile::createFileAbstraction(tableName);
         }
 
-        auto range = S3InterfaceUtils::extractRange(request, tableFiles[tableName]->size());
+        const auto range = S3InterfaceUtils::extractRange(request, tableFiles[tableName]->size());
+        std::cout << "getting data range " << range.begin << " " << range.end << " of " << tableFiles[tableName]->size() << std::endl;
         auto response = createResponse(Status::CODE_200, tableFiles[tableName]->getRange(range));
         S3InterfaceUtils::putByteSizeHeader(response, tableFiles[tableName]->size());
         return response;
@@ -93,7 +94,7 @@ public:
             PATH(String, fileName)) {
         std::cout << "beginning of time" << std::endl;
         std::cout << fileName.getValue("") << std::endl;
-        if (fileName == "buffered.parquet") {
+        if (fileName == "buffered.parquet" && pbf.size()) {
             auto response = createResponse(Status::CODE_200, "");
             S3InterfaceUtils::putByteSizeHeader(response, pbf.size());
             return response;

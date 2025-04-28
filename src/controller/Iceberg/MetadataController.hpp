@@ -39,11 +39,12 @@ public:
     std::string buffer;
 
     void prepareMetadata(const std::string& tableName){
+        std::cout << tableName << std::endl;
         pqxx::work tx(conn);
         const pqxx::row table = tx.exec(""
-                                  "SELECT table_uuid, last_sequence_number, last_updated_ms, current_snapshot_id"
-                                  "FROM table"
-                                  "WHERE name = $1", pqxx::params{tableName}
+                                  "SELECT table_uuid, last_sequence_number, last_updated_ms, current_snapshot_id "
+                                  "FROM tables "
+                                  "WHERE name = $1 ", pqxx::params{tableName}
         ).one_row();
         const IcebergMetadataDto::Wrapper metadata = IcebergMetadataDto::createShared();
         metadata->tableUUID = table[0].as<std::string>();
@@ -51,11 +52,14 @@ public:
         metadata->lastUpdatedMs = table[2].as<int>();
         metadata->currentSnapshotId = table[3].as<int>();
 
+        buffer = objectMapper.writeToString(metadata);
+        std::cout << "buffer 1 " << buffer << std::endl;
+
         for (const auto& [snapshotId, sequenceNumber, timestampMs, manifestList, summaryOperation] :
             tx.query<int, int, int, std::string, std::string>(""
                 "SELECT snapshot_id, sequence_number, timestamp_ms, manifest_list, summary_operation "
-                "FROM table"
-                "WHERE table_name = $1", pqxx::params{tableName})) {
+                "FROM snapshot "
+                "WHERE table_uuid = $1 ", pqxx::params{*metadata->tableUUID})) {
             auto dto = IcebergSnapshotDto::createShared();
             dto->snapshotId = snapshotId;
             dto->sequenceNumber = sequenceNumber;
@@ -63,15 +67,30 @@ public:
             dto->summary->operation = summaryOperation;
             metadata->snapshots->push_back(dto);
         }
+
+        for (const auto& [columnId, columnName, required, type] :
+            tx.query<int, std::string, bool, std::string>(""
+                "SELECT column_id, column_name, required, type "
+                "FROM Schema "
+                "WHERE table_uuid = $1 ", pqxx::params{*metadata->tableUUID})) {
+            auto dto = IcebergFieldDto::createShared();
+            dto->id = columnId;
+            dto->name = columnName;
+            dto->required = required;
+            dto->type = oatpp::String(type);
+            metadata->schemas[0]->fields->push_back(dto);
+        }
+
         tx.commit();
         buffer = objectMapper.writeToString(metadata);
+        std::cout << "buffer " << buffer << std::endl;
     }
 
     void prepareManifestList(){
         avro::ValidSchema schema;
-        std::ifstream in("../avro_schemas/manifest-list.json");
+        std::ifstream inSchema("../avro_schemas/manifest-list.json");
 
-        avro::compileJsonSchema(in, schema);
+        avro::compileJsonSchema(inSchema, schema);
         manifest_file manifest;
         manifest.manifest_path = "http://localhost:8000/manifest-file/file.avro";
         manifest.manifest_length = 1000;
@@ -85,6 +104,7 @@ public:
         manifest.added_rows_count = 0;
         manifest.existing_rows_count = 600000;
         manifest.deleted_rows_count = 0;
+        manifest.sequence_number = 0;
         r508 summary;
         summary.contains_null = false;
         summary.contains_nan.set_bool(false);
@@ -98,32 +118,46 @@ public:
         dataFileWriter.flush();
         dataFileWriter.close();
 
+        std::unique_ptr<avro::InputStream> in = avro::fileInputStream("temp.avro");
+        avro::DataFileReader<manifest_file> dataFileReader(std::move(in), schema);
+        while (dataFileReader.read(manifest)) {
+            std::cout << "another record " << manifest.manifest_path << std::endl;
+        }
+
         std::ifstream avroIn("temp.avro");
         buffer = std::string((std::istreambuf_iterator<char>(avroIn)), std::istreambuf_iterator<char>());
     }
 
     void prepareManifestFile(){
-        std::cout << "head manifest-file" << std::endl;
         avro::ValidSchema schema;
-        std::ifstream in("../avro_schemas/manifest-file.json");
-        avro::compileJsonSchema(in, schema);
+        std::ifstream inSchema("../avro_schemas/manifest-file.json");
+        avro::compileJsonSchema(inSchema, schema);
 
         manifest_entry manifest;
-        manifest.data_file.file_path = "http://localhost:8000/data/lineitem.parquet";
-        std::unique_ptr<avro::OutputStream> out = avro::fileOutputStream("temp.avro");
+        manifest.data_file.file_path = "http://localhost:8000/data/test/buffered.parquet";
+        manifest.data_file.content = 0;
+        manifest.data_file.file_size_in_bytes = 178 * 1024 * 1024;
+        manifest.data_file.record_count = 600000;
+
+        std::unique_ptr<avro::OutputStream> out = avro::fileOutputStream("temp2.avro");
         avro::DataFileWriter<manifest_entry> dataFileWriter(std::move(out), schema);
 
         dataFileWriter.write(manifest);
         dataFileWriter.flush();
         dataFileWriter.close();
 
-        std::ifstream avroIn("temp.avro");
+        std::unique_ptr<avro::InputStream> in = avro::fileInputStream("temp2.avro");
+        avro::DataFileReader<manifest_entry> dataFileReader(std::move(in), schema);
+        while (dataFileReader.read(manifest)) {
+            std::cout << "another record " << manifest.data_file.file_path << std::endl;
+        }
+
+        std::ifstream avroIn("temp2.avro");
         buffer = std::string((std::istreambuf_iterator<char>(avroIn)), std::istreambuf_iterator<char>());
     }
 
-    [[nodiscard]] std::shared_ptr<OutgoingResponse> respondWithBufferSize(){
+    [[nodiscard]] std::shared_ptr<OutgoingResponse> respondWithBufferSize() const {
         auto response = createResponse(Status::CODE_200, "");
-        std::cout << buffer.size() << std::endl;
         S3InterfaceUtils::putByteSizeHeader(response, buffer.size());
         return response;
     }
@@ -141,7 +175,7 @@ public:
              PATH(String, fileName)) {
         assert(fileName->ends_with(".json"));
         std::cout << "head metadata" << std::endl;
-        prepareMetadata(fileName);
+        prepareMetadata(fileName->substr(0, fileName->size() - 5));
         return respondWithBufferSize();
     }
 
@@ -164,8 +198,7 @@ public:
     ENDPOINT("GET", "/metadata/{fileName}", getMetadata,
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
-        std::cout << "get metadata" << std::endl;
-        prepareMetadata(fileName);
+        std::cout << "get metadata for " << *fileName << std::endl;
         const auto range = S3InterfaceUtils::extractRange(request, buffer.size());
         std::cout << range.begin << " " << range.end << " (of " << buffer.size() << ")" << std::endl;
         return createResponse(Status::CODE_200, buffer);
@@ -175,7 +208,6 @@ public:
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
         std::cout << "get manifest-list " << fileName->c_str() << std::endl;
-        prepareManifestList();
         auto range = S3InterfaceUtils::extractRange(request, buffer.size());
         std::cout << range.begin << " " << range.end << " (of " << buffer.size() << ")" << std::endl;
         auto response = createResponse(Status::CODE_200, buffer);
@@ -186,9 +218,9 @@ public:
     ENDPOINT("GET", "/manifest-file/{fileName}", getManifestFile,
              REQUEST(std::shared_ptr<IncomingRequest>, request),
              PATH(String, fileName)){
-        std::cout << "get manifest-file" << std::endl;
-        prepareManifestFile();
         auto range = S3InterfaceUtils::extractRange(request, buffer.size());
+        std::cout << "get manifest-file" << std::endl;
+
         std::cout << range.begin << " " << range.end << " (of " << buffer.size() << ")" << std::endl;
         return createResponse(Status::CODE_200, buffer);
     }

@@ -63,6 +63,16 @@ public:
             size_ = 0;
             return;
         }
+
+        std::vector<std::shared_ptr<arrow::Field>> updated_fields;
+        for (const auto& field : combinedTable->fields()) {
+            updated_fields.push_back(field->WithMetadata(arrow::KeyValueMetadata::Make(
+                {"PARQUET:field_id"}, {std::to_string(updated_fields.size())})));
+            std::cout << field->ToString(true) << std::endl;
+        }
+        combinedTable = arrow::Table::Make(arrow::schema(updated_fields), combinedTable->columns());
+        std::cout << combinedTable->schema()->ToString(true) << std::endl;
+
         // Write table to buffer
         const auto out = arrow::io::BufferOutputStream::Create().ValueOrDie();
         PARQUET_THROW_NOT_OK(parquet::arrow::WriteTable(*combinedTable, arrow::default_memory_pool(), out));
@@ -77,6 +87,7 @@ public:
     }
 
     std::shared_ptr<std::string> getRange(const S3InterfaceUtils::ByteRange byteRange) override {
+        std::cout << byteRange.begin << " " << byteRange.end << std::endl;
         result->resize(byteRange.size());
         memcpy(result->data(), buffer->data() + byteRange.begin, byteRange.size());
         return result;
