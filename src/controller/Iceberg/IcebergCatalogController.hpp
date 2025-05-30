@@ -5,13 +5,18 @@
 #include OATPP_CODEGEN_BEGIN(ApiController) //<- Begin Codegen
 
 #include "../../dto/IcebergRestDtos/CatalogConfigDto.hpp"
+#include "../../dto/IcebergRestDtos/CommitTableRequestDto.hpp"
+#include "../../dto/IcebergRestDtos/CreateNamespaceRequestDto.hpp"
+#include "../../dto/IcebergRestDtos/CreateTableRequestDto.hpp"
+#include "../../dto/IcebergRestDtos/CreateTableResponseDto.hpp"
 #include "../../dto/IcebergRestDtos/ListNamespacesResponseDto.hpp"
 #include "../../dto/IcebergRestDtos/GetNamespaceResponseDto.hpp"
 #include "../../dto/IcebergRestDtos/ListTablesResponseDto.hpp"
 #include "../../dto/IcebergRestDtos/LoadTableResponseDto.hpp"
 
-class IcebergCatalogController : public oatpp::web::server::api::ApiController {
+class IcebergCatalogController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
+    static std::unordered_map<String, std::vector<Object<IcebergMetadataDto>>> namespaces;
 public:
     explicit IcebergCatalogController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
             : oatpp::web::server::api::ApiController(apiContentMappers)
@@ -28,7 +33,6 @@ public:
 
     ENDPOINT("GET", "/v1/config", getConfig){
         std::cout << "Get config" << std::endl;
-        std::cout << objectMapper.writeToString(ConfigDto::createShared())->c_str() << std::endl;
         return createDtoResponse(Status::CODE_200, ConfigDto::createShared());
     }
 
@@ -37,6 +41,44 @@ public:
         std::cout << "List namespaces, page token = " << pageToken->c_str() << std::endl;
         std::cout << objectMapper.writeToString(ListNamespacesResponseDto::createShared())->c_str() << std::endl;
         return createDtoResponse(Status::CODE_200, ListNamespacesResponseDto::createShared());
+    }
+
+    ENDPOINT("POST", "/v1/namespaces", postNamespaces,
+            REQUEST(std::shared_ptr<IncomingRequest>, request)) {
+        const auto namespaceRequest = objectMapper.readFromString<Object<CreateNamespaceRequestDto>>(request->readBodyToString());
+        assert(namespaceRequest->namespaces->size() == 1);
+        namespaces[namespaceRequest->namespaces[0]] = {};
+        return createResponse(Status::CODE_200);
+    }
+
+    ENDPOINT("POST", "v1/namespaces/{nspace}/{table}", postTable,
+            PATH(String, nspace), PATH(String, table),
+            REQUEST(std::shared_ptr<IncomingRequest>, request)) {
+        const auto tableRequest = objectMapper.readFromString<Object<CreateTableRequestDto>>(request->readBodyToString());
+        const auto metadata = IcebergMetadataDto::createShared();
+        metadata->schemas->push_back(tableRequest->schema);
+        metadata->partitionSpecs->push_back(tableRequest->partitionSpec);
+        metadata->sortOrders->push_back(tableRequest->writeOrder);
+        namespaces[nspace].push_back(metadata);
+
+        const auto response = UpdateTableResponseDto::createShared();
+        response->metadata = metadata;
+        response->metadataLocation = "./metadata/v1.json";
+        return createDtoResponse(Status::CODE_200, response);
+    }
+
+    ENDPOINT("POST", "v1/namespaces/{nspace}/tables/{table}", commit,
+            PATH(String, nspace), PATH(String, table),
+            REQUEST(std::shared_ptr<IncomingRequest>, request)) {
+        const auto commitRequest = objectMapper.readFromString<Object<CommitTableRequestDto>>(request->readBodyToString());
+        const auto& metadata = namespaces[nspace][0];
+        metadata->snapshots->push_back(commitRequest->updates[0]->snapshot);
+        metadata->currentSnapshotId = metadata->snapshots->size() - 1;
+
+        const auto response = UpdateTableResponseDto::createShared();
+        response->metadata = metadata;
+        response->metadataLocation = "./metadata/v1.json";
+        return createDtoResponse(Status::CODE_200, response);
     }
 
     ENDPOINT("GET", "/v1/namespaces/{nspace}", getNamespace,
