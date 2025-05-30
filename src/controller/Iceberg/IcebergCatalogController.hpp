@@ -4,19 +4,20 @@
 
 #include OATPP_CODEGEN_BEGIN(ApiController) //<- Begin Codegen
 
-#include "../../dto/IcebergRestDtos/CatalogConfigDto.hpp"
-#include "../../dto/IcebergRestDtos/CommitTableRequestDto.hpp"
-#include "../../dto/IcebergRestDtos/CreateNamespaceRequestDto.hpp"
-#include "../../dto/IcebergRestDtos/CreateTableRequestDto.hpp"
-#include "../../dto/IcebergRestDtos/CreateTableResponseDto.hpp"
-#include "../../dto/IcebergRestDtos/ListNamespacesResponseDto.hpp"
+#include "../../dto/IcebergRestDtos/CatalogConfig.hpp"
+#include "../../dto/IcebergRestDtos/CommitTableRequest.hpp"
+#include "../../dto/IcebergRestDtos/CreateNamespaceRequest.hpp"
+#include "../../dto/IcebergRestDtos/CreateTableRequest.hpp"
+#include "../../dto/IcebergRestDtos/CreateTableResponse.hpp"
+#include "../../dto/IcebergRestDtos/ListNamespacesResponse.hpp"
 #include "../../dto/IcebergRestDtos/GetNamespaceResponseDto.hpp"
-#include "../../dto/IcebergRestDtos/ListTablesResponseDto.hpp"
-#include "../../dto/IcebergRestDtos/LoadTableResponseDto.hpp"
+#include "../../dto/IcebergRestDtos/ListTablesResponse.hpp"
+#include "../../dto/IcebergRestDtos/LoadTableResponse.hpp"
 
 class IcebergCatalogController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
-    static std::unordered_map<String, std::vector<Object<IcebergMetadataDto>>> namespaces;
+    static std::unordered_map<String, std::vector<IcebergMetadata>> namespaces;
+    static thread_local String buffer;
 public:
     explicit IcebergCatalogController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
             : oatpp::web::server::api::ApiController(apiContentMappers)
@@ -33,52 +34,65 @@ public:
 
     ENDPOINT("GET", "/v1/config", getConfig){
         std::cout << "Get config" << std::endl;
-        return createDtoResponse(Status::CODE_200, ConfigDto::createShared());
+        Config config;
+        const nlohmann::json configJson = config;
+        buffer = configJson.dump();
+        return createResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("GET", "/v1/namespaces", listNamespaces,
              QUERY(String, pageToken)){
         std::cout << "List namespaces, page token = " << pageToken->c_str() << std::endl;
-        std::cout << objectMapper.writeToString(ListNamespacesResponseDto::createShared())->c_str() << std::endl;
-        return createDtoResponse(Status::CODE_200, ListNamespacesResponseDto::createShared());
+        ListNamespacesResponse response;
+        const nlohmann::json responseJson = response;
+        buffer = responseJson.dump();
+        return createDtoResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("POST", "/v1/namespaces", postNamespaces,
             REQUEST(std::shared_ptr<IncomingRequest>, request)) {
-        const auto namespaceRequest = objectMapper.readFromString<Object<CreateNamespaceRequestDto>>(request->readBodyToString());
-        assert(namespaceRequest->namespaces->size() == 1);
-        namespaces[namespaceRequest->namespaces[0]] = {};
+        std::cout << "post namespace" << std::endl;
+        const CreateNamespaceRequest cnq = nlohmann::json::parse(*request->readBodyToString());
+        assert(cnq.namespaces.size() == 1);
+        namespaces[cnq.namespaces[0]] = {};
         return createResponse(Status::CODE_200);
     }
 
     ENDPOINT("POST", "v1/namespaces/{nspace}/{table}", postTable,
             PATH(String, nspace), PATH(String, table),
             REQUEST(std::shared_ptr<IncomingRequest>, request)) {
-        const auto tableRequest = objectMapper.readFromString<Object<CreateTableRequestDto>>(request->readBodyToString());
-        const auto metadata = IcebergMetadataDto::createShared();
-        metadata->schemas->push_back(tableRequest->schema);
-        metadata->partitionSpecs->push_back(tableRequest->partitionSpec);
-        metadata->sortOrders->push_back(tableRequest->writeOrder);
+        std::cout << "post table" << std::endl;
+        const CreateTableRequest tableRequest = nlohmann::json::parse(*request->readBodyToString());
+        IcebergMetadata metadata;
+        metadata.schemas.push_back(tableRequest.schema);
+        assert(tableRequest.partitionSpec && tableRequest.writeOrder);
+        metadata.partitionSpecs.push_back(*tableRequest.partitionSpec);
+        metadata.sortOrders.push_back(*tableRequest.writeOrder);
         namespaces[nspace].push_back(metadata);
 
-        const auto response = UpdateTableResponseDto::createShared();
-        response->metadata = metadata;
-        response->metadataLocation = "./metadata/v1.json";
-        return createDtoResponse(Status::CODE_200, response);
+        UpdateTableResponse response;
+        response.metadata = metadata;
+        response.metadataLocation = "./metadata/v1.json";
+        nlohmann::json responseJson = response;
+        buffer = responseJson.dump();
+        return createResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("POST", "v1/namespaces/{nspace}/tables/{table}", commit,
             PATH(String, nspace), PATH(String, table),
             REQUEST(std::shared_ptr<IncomingRequest>, request)) {
-        const auto commitRequest = objectMapper.readFromString<Object<CommitTableRequestDto>>(request->readBodyToString());
-        const auto& metadata = namespaces[nspace][0];
-        metadata->snapshots->push_back(commitRequest->updates[0]->snapshot);
-        metadata->currentSnapshotId = metadata->snapshots->size() - 1;
+        std::cout << "do commit" << std::endl;
+        const CommitTableRequest commitRequest = nlohmann::json::parse(*request->readBodyToString());
+        auto& metadata = namespaces[nspace][0];
+        metadata.snapshots.push_back(commitRequest.updates[0].snapshot);
+        metadata.currentSnapshotId = metadata.snapshots.size() - 1;
 
-        const auto response = UpdateTableResponseDto::createShared();
-        response->metadata = metadata;
-        response->metadataLocation = "./metadata/v1.json";
-        return createDtoResponse(Status::CODE_200, response);
+        UpdateTableResponse response;
+        response.metadata = metadata;
+        response.metadataLocation = "./metadata/v1.json";
+        nlohmann::json responseJson = response;
+        buffer = responseJson.dump();
+        return createResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("GET", "/v1/namespaces/{nspace}", getNamespace,
@@ -90,28 +104,34 @@ public:
     ENDPOINT("GET", "/v1/namespaces/{nspace}/tables", listTables,
              PATH(String, nspace)){
         std::cout << "List tables " << nspace->c_str() << std::endl;
-        const auto responseDto = ListTablesResponseDto::createShared();
+        ListTablesResponse response;
         pqxx::work tx{conn};
         for (const auto& [name] : tx.query<std::string>("SELECT name FROM table")) {
-            responseDto->identifiers->push_back(TableIdentifierDto::createShared());
-            responseDto->identifiers->back()->name = name;
+            response.identifiers.emplace_back();
+            response.identifiers.back().name = name;
         }
         tx.commit();
-        return createDtoResponse(Status::CODE_200, responseDto);
+        const nlohmann::json responseJson = response;
+        buffer = responseJson.dump();
+        return createResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("GET", "/v1/namespaces/{nspace}/tables/{table}", getTable,
              PATH(String, nspace), PATH(String, table)){
         std::cout << "Load table " << nspace->c_str() << " " << table->c_str() << std::endl;
-        std::cout << objectMapper.writeToString(LoadTableResponseDto::createShared())->c_str() << std::endl;
-        return createDtoResponse(Status::CODE_200, LoadTableResponseDto::createShared());
+        LoadTableResponse response;
+        const nlohmann::json responseJson = response;
+        buffer = responseJson.dump();
+        return createResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("GET", "/v1/namespaces/{nspace}/views", listViews,
              PATH(String, nspace)){
         std::cout << "List views " << nspace->c_str() << std::endl;
-        std::cout << objectMapper.writeToString(ListTablesResponseDto::createShared())->c_str() << std::endl;
-        return createDtoResponse(Status::CODE_200, ListTablesResponseDto::createShared());
+        ListTablesResponse response;
+        const nlohmann::json responseJson = response;
+        buffer = responseJson.dump();
+        return createResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("GET", "/v1/namespaces/{nspace}/views/{view}", loadView){

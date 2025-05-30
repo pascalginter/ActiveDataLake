@@ -26,7 +26,7 @@
 
 #include "oatpp/json/Serializer.hpp"
 
-#include "../../dto/IcebergMetadataDto.hpp"
+#include "../../dto/IcebergMetadata.hpp"
 
 class IcebergMetadataController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
@@ -46,43 +46,41 @@ public:
                                   "FROM tables "
                                   "WHERE name = $1 ", pqxx::params{tableName}
         ).one_row();
-        const IcebergMetadataDto::Wrapper metadata = IcebergMetadataDto::createShared();
-        metadata->tableUUID = table[0].as<std::string>();
-        metadata->lastSequenceNumber = table[1].as<int>();
-        metadata->lastUpdatedMs = table[2].as<int>();
-        metadata->currentSnapshotId = table[3].as<int>();
-
-        buffer = objectMapper.writeToString(metadata);
-        std::cout << "buffer 1 " << buffer << std::endl;
+        IcebergMetadata metadata;
+        metadata.tableUUID = table[0].as<std::string>();
+        metadata.lastSequenceNumber = table[1].as<int>();
+        metadata.lastUpdatedMs = table[2].as<int>();
+        metadata.currentSnapshotId = table[3].as<int>();
 
         for (const auto& [snapshotId, sequenceNumber, timestampMs, manifestList, summaryOperation] :
             tx.query<int, int, int, std::string, std::string>(""
                 "SELECT snapshot_id, sequence_number, timestamp_ms, manifest_list, summary_operation "
                 "FROM snapshot "
-                "WHERE table_uuid = $1 ", pqxx::params{*metadata->tableUUID})) {
-            auto dto = IcebergSnapshotDto::createShared();
-            dto->snapshotId = snapshotId;
-            dto->sequenceNumber = sequenceNumber;
-            dto->timestampMs = timestampMs;
-            dto->summary->operation = summaryOperation;
-            metadata->snapshots->push_back(dto);
+                "WHERE table_uuid = $1 ", pqxx::params{metadata.tableUUID})) {
+            IcebergSnapshot snapshot;
+            snapshot.snapshotId = snapshotId;
+            snapshot.sequenceNumber = sequenceNumber;
+            snapshot.timestampMs = timestampMs;
+            snapshot.summary.operation = summaryOperation;
+            metadata.snapshots.push_back(snapshot);
         }
 
         for (const auto& [columnId, columnName, required, type] :
             tx.query<int, std::string, bool, std::string>(""
                 "SELECT column_id, column_name, required, type "
                 "FROM Schema "
-                "WHERE table_uuid = $1 ", pqxx::params{*metadata->tableUUID})) {
-            auto dto = IcebergFieldDto::createShared();
-            dto->id = columnId;
-            dto->name = columnName;
-            dto->required = required;
-            dto->type = oatpp::String(type);
-            metadata->schemas[0]->fields->push_back(dto);
+                "WHERE table_uuid = $1 ", pqxx::params{metadata.tableUUID})) {
+            IcebergField field;
+            field.id = columnId;
+            field.name = columnName;
+            field.required = required;
+            field.type = oatpp::String(type);
+            metadata.schemas[0].fields.push_back(field);
         }
 
         tx.commit();
-        buffer = objectMapper.writeToString(metadata);
+        nlohmann::json metadataJson = metadata;
+        buffer = metadataJson.dump();
         std::cout << "buffer " << buffer << std::endl;
     }
 

@@ -1,17 +1,22 @@
 #ifndef ICEBERG_SNAPSHOT_SUMMARY_HPP
 #define ICEBERG_SNAPSHOT_SUMMARY_HPP
 
-#include "oatpp/macro/codegen.hpp"
-#include "oatpp/Types.hpp"
+#include <string>
+#include <nlohmann/json.hpp>
 
-#include OATPP_CODEGEN_BEGIN(DTO)
-
-class IcebergSnapshotSummaryDto : public oatpp::DTO {
-    DTO_INIT(IcebergSnapshotSummaryDto, DTO)
-
-    DTO_FIELD(String, operation, "operation") = "append";
+struct IcebergSnapshotSummary {
+    std::string operation = "append";
 };
 
-#include OATPP_CODEGEN_END(DTO)
+// JSON (de)serialization
+inline void to_json(nlohmann::json& j, const IcebergSnapshotSummary& s) {
+    j = {
+        {"operation", s.operation}
+    };
+}
+
+inline void from_json(const nlohmann::json& j, IcebergSnapshotSummary& s) {
+    j.at("operation").get_to(s.operation);
+}
 
 #endif // ICEBERG_SNAPSHOT_SUMMARY_HPP
