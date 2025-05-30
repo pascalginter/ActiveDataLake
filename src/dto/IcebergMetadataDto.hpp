@@ -11,19 +11,19 @@
 
 #include OATPP_CODEGEN_BEGIN(DTO)
 
-class IcebergMetadataDto : public oatpp::DTO {
+class IcebergMetadataDto final : public oatpp::DTO {
 
     DTO_INIT(IcebergMetadataDto, DTO)
 
     DTO_FIELD(Int32, formatVersion, "format-version") = 2;
     DTO_FIELD(String, tableUUID, "table-uuid") = "b0dc1444-6864-46f2-b41d-1876b96d1d3f";
-    DTO_FIELD(String, location, "location") = "'http://localhost:8000/'";
+    DTO_FIELD(String, location, "location") = ".";
     DTO_FIELD(Int64, lastSequenceNumber, "last-sequence-number") = 1;
     DTO_FIELD(Int64, lastUpdatedMs, "last-updated-ms") = 1;
     DTO_FIELD(Int64, lastColumnId, "last-column-id") = 80;
-    DTO_FIELD(List<Object<IcebergSchemaDto>>, schemas, "schemas") = {IcebergSchemaDto::createShared()};
+    DTO_FIELD(List<Object<IcebergSchemaDto>>, schemas, "schemas") = {};
     DTO_FIELD(Int32, currentSchemaId, "current-schema-id") = 0;
-    DTO_FIELD(List<Object<IcebergPartitionSpecDto>>, partitionSpecs, "partition-specs") = {IcebergPartitionSpecDto::createShared()};
+    DTO_FIELD(List<Object<IcebergPartitionSpecDto>>, partitionSpecs, "partition-specs") = {};
     DTO_FIELD(Int32, defaultSpecId, "default-spec-id") = 0;
     DTO_FIELD(Int32, lastPartitionId, "last-partition-id") = 0;
     // properties (optional)
@@ -31,7 +31,7 @@ class IcebergMetadataDto : public oatpp::DTO {
     DTO_FIELD(List<Object<IcebergSnapshotDto>>, snapshots, "snapshots") = {};
     // snapshot-log (optional)
     // metadata-log (optional)
-    DTO_FIELD(List<Object<IcebergSortOrderDto>>, sortOrders, "sort-orders") = {IcebergSortOrderDto::createShared()};
+    DTO_FIELD(List<Object<IcebergSortOrderDto>>, sortOrders, "sort-orders") = {};
     DTO_FIELD(Int32, defaultSortOrderId, "default-sort-order-id") = 0;
 };
 

@@ -92,7 +92,6 @@ public:
             REQUEST(std::shared_ptr<IncomingRequest>, request),
             PATH(String, tableName),
             PATH(String, fileName)) {
-        std::cout << "beginning of time" << std::endl;
         std::cout << fileName.getValue("") << std::endl;
         if (fileName == "buffered.parquet" && pbf.size()) {
             auto response = createResponse(Status::CODE_200, "");
@@ -185,9 +184,6 @@ public:
             executor.execute<EvictionJob>();
             return createResponse(Status::CODE_200, "");
         }
-
-
-
     }
 };
 
