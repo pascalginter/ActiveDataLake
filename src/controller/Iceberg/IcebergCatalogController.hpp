@@ -9,6 +9,7 @@
 #include "../../dto/IcebergRestDtos/CreateNamespaceRequest.hpp"
 #include "../../dto/IcebergRestDtos/CreateTableRequest.hpp"
 #include "../../dto/IcebergRestDtos/CreateTableResponse.hpp"
+#include "../../dto/IcebergRestDtos/ErrorResponse.hpp"
 #include "../../dto/IcebergRestDtos/ListNamespacesResponse.hpp"
 #include "../../dto/IcebergRestDtos/GetNamespaceResponseDto.hpp"
 #include "../../dto/IcebergRestDtos/ListTablesResponse.hpp"
@@ -18,6 +19,9 @@ class IcebergCatalogController final : public oatpp::web::server::api::ApiContro
     static thread_local pqxx::connection conn;
     static std::unordered_map<String, std::vector<IcebergMetadata>> namespaces;
     static thread_local String buffer;
+    std::atomic<int64_t> ref = 0;
+    std::atomic<int64_t> successfulCommits = 0;
+    std::atomic<int64_t> failedCommits = 0;
 public:
     explicit IcebergCatalogController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
             : oatpp::web::server::api::ApiController(apiContentMappers)
@@ -70,6 +74,7 @@ public:
         metadata.sortOrders.push_back(*tableRequest.writeOrder);
         namespaces[nspace].push_back(metadata);
 
+        ref = metadata.currentSnapshotId;
         UpdateTableResponse response;
         response.metadata = metadata;
         response.metadataLocation = "./metadata/v1.json";
@@ -81,17 +86,50 @@ public:
     ENDPOINT("POST", "v1/namespaces/{nspace}/tables/{table}", commit,
             PATH(String, nspace), PATH(String, table),
             REQUEST(std::shared_ptr<IncomingRequest>, request)) {
-        std::cout << "do commit" << std::endl;
-        const CommitTableRequest commitRequest = nlohmann::json::parse(*request->readBodyToString());
+        CommitTableRequest commitRequest = nlohmann::json::parse(*request->readBodyToString());
+        assert(commitRequest.requirements.size() == 2);
+        assert(commitRequest.requirements[0].type.starts_with("assert-ref-snapshot-id"));
+        assert(commitRequest.requirements[1].type.starts_with("assert-table-uuid"));
+
+        if (ref != commitRequest.requirements[0].snapshotId) {
+            ++failedCommits;
+            ErrorResponse response("The commit has failed", "CommitFailedException", 409);
+            nlohmann::json responseJson = response;
+            buffer = responseJson.dump();
+            return createResponse(Status::CODE_409, buffer);
+        }
+
         auto& metadata = namespaces[nspace][0];
         metadata.snapshots.push_back(commitRequest.updates[0].snapshot);
-        metadata.currentSnapshotId = metadata.snapshots.size() - 1;
+        metadata.currentSnapshotId = metadata.snapshots.size();
 
         UpdateTableResponse response;
         response.metadata = metadata;
         response.metadataLocation = "./metadata/v1.json";
         nlohmann::json responseJson = response;
         buffer = responseJson.dump();
+        std::ofstream out("./metadata/v1.json");
+        out << buffer->c_str();
+
+        if (ref.compare_exchange_weak(commitRequest.requirements[0].snapshotId, metadata.currentSnapshotId)) {
+            ++successfulCommits;
+            ref = metadata.currentSnapshotId;
+            return createResponse(Status::CODE_200, buffer);
+        } else {
+            ++failedCommits;
+            ErrorResponse errorResponse("The commit has failed", "CommitFailedException", 409);
+            nlohmann::json errorResponseJson = errorResponse;
+            buffer = errorResponseJson.dump();
+            return createResponse(Status::CODE_409, buffer);
+        }
+    }
+
+    ENDPOINT("GET", "/v1/statistics", getStatistics) {
+        nlohmann::json json = {
+            {"success", successfulCommits.load()},
+            {"failed", failedCommits.load()}
+        };
+        buffer = json.dump();
         return createResponse(Status::CODE_200, buffer);
     }
 
@@ -120,6 +158,8 @@ public:
              PATH(String, nspace), PATH(String, table)){
         std::cout << "Load table " << nspace->c_str() << " " << table->c_str() << std::endl;
         LoadTableResponse response;
+        response.metadataLocation = "./metadata/v1.json";
+        response.metadata = namespaces[nspace->c_str()][0];
         const nlohmann::json responseJson = response;
         buffer = responseJson.dump();
         return createResponse(Status::CODE_200, buffer);

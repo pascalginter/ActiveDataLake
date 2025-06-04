@@ -7,6 +7,7 @@
 struct TableRequirement {
     std::string type;
     std::string ref;
+    std::string uuid;
     int64_t snapshotId = 0;  // corresponds to "snapshot-id"
 
     // JSON serialization
@@ -14,7 +15,8 @@ struct TableRequirement {
         j = {
             {"type", r.type},
             {"ref", r.ref},
-            {"snapshot-id", r.snapshotId}
+            {"snapshot-id", r.snapshotId},
+            {"uuid", r.uuid}
         };
     }
 
@@ -22,6 +24,7 @@ struct TableRequirement {
         if (j.contains("type")) j.at("type").get_to(r.type);
         if (j.contains("ref")) j.at("ref").get_to(r.ref);
         if (j.contains("snapshot-id")) j.at("snapshot-id").get_to(r.snapshotId);
+        if (j.contains("uuid")) j.at("uuid").get_to(r.uuid);
     }
 };
 
