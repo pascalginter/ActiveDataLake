@@ -31,11 +31,10 @@
 
 class DataController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
-    PostgresBufferedFile pbf;
     oatpp::async::Executor executor{1};
 public:
     explicit DataController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
-        : oatpp::web::server::api::ApiController(apiContentMappers), pbf("") {
+        : oatpp::web::server::api::ApiController(apiContentMappers) {
     }
 
 private:
@@ -93,11 +92,11 @@ public:
             PATH(String, tableName),
             PATH(String, fileName)) {
         std::cout << fileName.getValue("") << std::endl;
-        if (fileName == "buffered.parquet" && pbf.size()) {
+        /*if (fileName == "buffered.parquet" && pbf.size()) {
             auto response = createResponse(Status::CODE_200, "");
-            S3InterfaceUtils::putByteSizeHeader(response, pbf.size());
+           // S3InterfaceUtils::putByteSizeHeader(response, pbf.size());
             return response;
-        }
+        }*/
         return createResponse(Status::CODE_404, "");
     }
 
@@ -148,10 +147,10 @@ public:
             REQUEST(std::shared_ptr<IncomingRequest>, request),
             PATH(String, tableName),
             PATH(String, fileName)) {
-        const auto range = S3InterfaceUtils::extractRange(request, pbf.size());
+        /*const auto range = S3InterfaceUtils::extractRange(request, pbf.size());
         std::cout << range.begin << " " << range.end << std::endl;
         const auto response = pbf.getRange(range);
-        return createResponse(Status::CODE_200, response);
+        return createResponse(Status::CODE_200, response);*/
     }
 
     ENDPOINT("POST", "/data/{tableName}/{fileName}", postData,

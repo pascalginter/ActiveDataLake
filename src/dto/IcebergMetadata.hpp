@@ -14,7 +14,7 @@
 struct IcebergMetadata {
     int32_t formatVersion = 2;
     std::string tableUUID = "b0dc1444-6864-46f2-b41d-1876b96d1d3f";
-    std::string location = ".";
+    std::string location = "s3://iceberg-tps";
     int64_t lastSequenceNumber = 1;
     int64_t lastUpdatedMs = 1;
     int64_t lastColumnId = 80;

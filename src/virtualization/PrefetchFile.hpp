@@ -8,6 +8,8 @@
 class PrefetchFile final : public VirtualizedFile {
     std::string key;
     std::array<std::atomic<bool>, 1024> outstandingRequests;
+    std::chrono::steady_clock::time_point begin;
+    std::atomic<int> remaining = 0;
     size_t size_ = 0;
     constexpr static std::string bucket = "adl-tpch";
     constexpr static size_t increment = 16 * (1 << 20);
@@ -15,6 +17,7 @@ class PrefetchFile final : public VirtualizedFile {
     Aws::S3Crt::S3CrtClient client;
 
     void makeRequest(size_t i) {
+        remaining++;
         Aws::S3Crt::Model::GetObjectRequest getRequest;
         getRequest.SetBucket(bucket);
         getRequest.SetKey(key);
@@ -30,6 +33,11 @@ class PrefetchFile final : public VirtualizedFile {
             outcome.GetResult().GetBody().read(result->data() + i, s);
             outstandingRequests[i / increment] = true;
             outstandingRequests[i / increment].notify_all();
+	    remaining--;
+	    if (remaining == 0){
+		std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+		std::cout << "Time difference = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
+	    }
         });
     }
 public:
@@ -41,6 +49,7 @@ public:
         size_ = client.HeadObject(request).GetResult().GetContentLength();
         assert(size_ < increment * 1024);
         result->resize(size_);
+	begin = std::chrono::steady_clock::now();
         makeRequest(size_ / increment * increment);
         for (size_t i = 0; i+increment<size_; i+= increment){
             makeRequest(i);
