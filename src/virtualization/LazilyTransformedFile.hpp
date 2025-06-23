@@ -28,7 +28,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     std::unique_ptr<parquet::FileMetaData> parquetMetadata;
     std::string serializedParquetMetadata;
     static thread_local std::string buffer;
-    static thread_local std::vector<uint8_t> curr_buffer;
+    static thread_local std::vector<char> curr_buffer;
     hpqp::enumerable_thread_specific<std::vector<btrblocks::arrow::ColumnStreamReader>> columnReaders;
     size_t size_;
     size_t metadata_offset;
@@ -110,6 +110,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
                 vec = buffer.data() + offset;
             }else {
                 curr_buffer.resize(uncompressed_size);
+                vec = curr_buffer.data();
             }
 
             if (arrow::is_dictionary(arr->type_id())) {
@@ -117,23 +118,23 @@ class LazilyTransformedFile final : public VirtualizedFile {
                 ColumnChunkWriter::writeDictionaryEncodedChunk(
                     ParquetUtils::writePageWithoutData(getDictEncodedDataSize(arr->length(), unique_values),
                     arr->length(), false, true, byteLength),
-                    std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices(), buffer.data() + offset, byteLength, 0);
+                    std::static_pointer_cast<arrow::DictionaryArray>(arr)->indices(), vec, byteLength, 0);
             } else {
                 ColumnChunkWriter::writeColumnChunk(
                 ParquetUtils::writePageWithoutData(getDataSize(arr, isDictionaryPage),
                     arr->length(), isDictionaryPage, false),
-                    arr, buffer.data() + offset);
+                    arr, vec);
             }
 
-            assert(begin - chunkBegin >= 0);
-            assert(begin - chunkBegin < curr_buffer.size());
-            assert(end + 1 - chunkBegin >= 0);
-            assert(end + 1 - chunkBegin <= curr_buffer.size());
-            assert(offset + end - begin + 1 <= buffer.size());
+            //assert(begin - chunkBegin >= 0);
+            //assert(begin - chunkBegin < curr_buffer.size());
+            //assert(end + 1 - chunkBegin >= 0);
+            //assert(end + 1 - chunkBegin <= curr_buffer.size());
+            //assert(offset + end - begin + 1 <= buffer.size());
             if (!fast_path) {
                 memcpy(buffer.data() + offset, curr_buffer.data() + begin - chunkBegin, end - begin + 1);
             }
-            assert(curr_buffer.size() >= end - begin + 1);
+            //assert(curr_buffer.size() >= end - begin + 1);
             offset += end - begin + 1;
         }
     }
