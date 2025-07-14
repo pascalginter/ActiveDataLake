@@ -22,7 +22,6 @@
 #include "parquet/ParquetUtils.hpp"
 
 class LazilyTransformedFile final : public VirtualizedFile {
-    size_t requestCounter = 0;
     btrblocks::arrow::DirectoryReader directoryReader;
     const btrblocks::FileMetadata* metadata;
     std::unique_ptr<parquet::FileMetaData> parquetMetadata;
@@ -36,6 +35,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     std::mutex mtx;
     std::string path;
     std::vector<std::vector<int64_t>> uncompressedSizes;
+    std::atomic<int> totalStall = 0;
 
     [[nodiscard]] size_t calculateSizeFromFileMetadata(const btrblocks::FileMetadata* metadata) const {
         size_t result = 0;
@@ -151,6 +151,7 @@ public:
                 assert(localReaders.size() == metadata->num_columns);
                 return localReaders;
             }){
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         std::cout << "construct file" << std::endl;
         std::cout << "file has b" << metadata->num_chunks << " chunks" << std::endl;
         for (int column_i=0; column_i!=metadata->num_columns; column_i++) {
@@ -249,6 +250,8 @@ public:
         serializedParquetMetadata = parquetMetadata->SerializeToString();
         size_ = total_bytes + serializedParquetMetadata.size() + 8;
         metadata_offset = size_ - 8 - serializedParquetMetadata.size();
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        std::cout << "Time difference = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
     }
 
     size_t size() override {

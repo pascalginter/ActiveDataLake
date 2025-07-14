@@ -43,6 +43,24 @@ public:
     }
 };
 
+class MMapRangeReadCallback : public oatpp::data::stream::ReadCallback {
+    const char* data;
+    size_t total;
+    size_t pos = 0;
+
+public:
+    MMapRangeReadCallback(const char* ptr, size_t size)
+      : data(ptr), total(size) {}
+
+    oatpp::v_io_size read(void* buffer, oatpp::v_io_size count, oatpp::async::Action& action) override {
+        size_t toRead = std::min(count, (oatpp::v_io_size)(total - pos));
+        if (toRead == 0) return 0; // done
+        memcpy(buffer, data + pos, toRead);
+        pos += toRead;
+        return toRead;
+    }
+};
+
 class LocalFile final : public VirtualizedFile {
     static thread_local std::shared_ptr<std::string> result;
     MemoryMappedFile file;
@@ -55,9 +73,13 @@ public:
         return file.size;
     }
 
-    std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
-        result->resize(byteRange.size());
-        memcpy(result->data(), file.begin() + byteRange.begin, byteRange.size());
-        return result;
+    std::shared_ptr<oatpp::data::stream::ReadCallback> getRange(S3InterfaceUtils::ByteRange byteRange) override {
+        // Assuming you parsed the range already
+        auto callback = std::make_shared<MMapRangeReadCallback>(
+            file.begin() + byteRange.begin,
+            byteRange.size()
+        );
+
+        return callback;
     }
 };

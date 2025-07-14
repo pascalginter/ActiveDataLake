@@ -23,11 +23,10 @@
 #include OATPP_CODEGEN_BEGIN(ApiController) //<- Begin Codegen
 
 #include "oatpp/json/Serializer.hpp"
+#include "oatpp/web/protocol/http/outgoing/StreamingBody.hpp"
 #include <oatpp/async/Executor.hpp>
 
 #include "../../virtualization/VirtualizedFile.hpp"
-#include "../../virtualization/PostgresBufferedFile.hpp"
-#include "EvictionJob.hpp"
 
 class DataController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
@@ -82,8 +81,8 @@ public:
 
         const auto range = S3InterfaceUtils::extractRange(request, tableFiles[tableName]->size());
         std::cout << "getting data range " << range.begin << " " << range.end << " of " << tableFiles[tableName]->size() << std::endl;
-        auto response = createResponse(Status::CODE_200, tableFiles[tableName]->getRange(range));
-        S3InterfaceUtils::putByteSizeHeader(response, tableFiles[tableName]->size());
+        auto response = OutgoingResponse::createShared(Status::CODE_200, std::make_shared<oatpp::web::protocol::http::outgoing::StreamingBody>(tableFiles[tableName]->getRange(range)));
+        S3InterfaceUtils::putByteSizeHeader(response, range.size());
         return response;
     }
 
@@ -180,7 +179,7 @@ public:
             // finalize a multipart upload
             tx.exec("UPDATE BufferedFiles SET finalized = true WHERE file_name = $1", pqxx::params{*fileName});
             tx.commit();
-            executor.execute<EvictionJob>();
+            //executor.execute<EvictionJob>();
             return createResponse(Status::CODE_200, "");
         }
     }

@@ -87,7 +87,6 @@ public:
         if (isDictionaryEncoded) {
             // bit width
             result.push_back(bitWidth);
-            assert(num_values & 7 == 0);
             appendZigZagVarint(result, ((num_values + 7) / 8) << 1 | 1);
         }
 

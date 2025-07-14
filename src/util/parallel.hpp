@@ -13,7 +13,7 @@ struct BlockedRange {
 
 void parallel_for_each(size_t threads, BlockedRange range, const std::function<void(size_t)>& cb) {
   // don't use more threads than available in hardware
-  assert(threads <= std::thread::hardware_concurrency());
+  assert(threads <= 4 * std::thread::hardware_concurrency());
 
   // just work on main thread if thread count is <= 1
   if (threads <= 1) {
@@ -42,7 +42,7 @@ void parallel_for_each(size_t threads, BlockedRange range, const std::function<v
 
 void simple_parallel_for(size_t threads, BlockedRange range, const std::function<void(BlockedRange)>& cb) {
   // don't use more threads than available in hardware
-  assert(threads <= std::thread::hardware_concurrency());
+  assert(threads <= 2 * std::thread::hardware_concurrency());
 
   // just work on main thread if thread count is <= 1
   if (threads <= 1) {
@@ -79,17 +79,17 @@ class enumerable_thread_specific {
   using Iterator = typename std::vector<T>::iterator;
 
   enumerable_thread_specific(std::function<T()> cb) : constructor(cb) {
-    threads.reserve(std::thread::hardware_concurrency());
-    thread_specifics.reserve(std::thread::hardware_concurrency());
+    threads.reserve(4 * std::thread::hardware_concurrency());
+    thread_specifics.reserve(4 * std::thread::hardware_concurrency());
   }
 
   T& local() {
     auto thread_id = std::this_thread::get_id();
-    std::lock_guard guard(mtx);
     auto it = std::find(threads.begin(), threads.end(), thread_id);
     size_t pos = std::distance(threads.begin(), it);
     if (it == threads.end()) {
-      assert(thread_specifics.size() < std::thread::hardware_concurrency());
+      std::lock_guard guard(mtx);
+      assert(thread_specifics.size() < 4 * std::thread::hardware_concurrency());
       threads.push_back(thread_id);
       thread_specifics.push_back(constructor());
       pos = thread_specifics.size() - 1;
