@@ -86,6 +86,7 @@ public:
     ENDPOINT("POST", "v1/namespaces/{nspace}/tables/{table}", commit,
             PATH(String, nspace), PATH(String, table),
             REQUEST(std::shared_ptr<IncomingRequest>, request)) {
+        static std::atomic<int32_t> fileId = 0;
         CommitTableRequest commitRequest = nlohmann::json::parse(*request->readBodyToString());
         assert(commitRequest.requirements.size() == 2);
         assert(commitRequest.requirements[0].type.starts_with("assert-ref-snapshot-id"));
@@ -99,19 +100,22 @@ public:
             return createResponse(Status::CODE_409, buffer);
         }
 
-        auto& metadata = namespaces[nspace][0];
+        auto metadata = namespaces[nspace][0];
         metadata.snapshots.push_back(commitRequest.updates[0].snapshot);
         metadata.currentSnapshotId = metadata.snapshots.size();
 
+        ++fileId;
+        std::string location = "./metadata/" + std::to_string(fileId) + ".json";
         UpdateTableResponse response;
         response.metadata = metadata;
-        response.metadataLocation = "./metadata/v1.json";
+        response.metadataLocation = location;
         nlohmann::json responseJson = response;
         buffer = responseJson.dump();
-        std::ofstream out("./metadata/v1.json");
+        std::ofstream out(location);
         out << buffer->c_str();
 
         if (ref.compare_exchange_weak(commitRequest.requirements[0].snapshotId, metadata.currentSnapshotId)) {
+            namespaces[nspace][0] = metadata;
             ++successfulCommits;
             ref = metadata.currentSnapshotId;
             return createResponse(Status::CODE_200, buffer);
