@@ -113,32 +113,55 @@ public:
          PATH(String, tableName),
          PATH(String, fileName)) {
         pqxx::work tx{conn};
-        std::cout << "put matched" << std::endl;
+        std::cout << "put matched " << std::endl;
+        std::cout << *fileName << std::endl;
         auto parameters = request->getQueryParameters().getAll();
         const oatpp::data::share::StringKeyLabel label("partNumber");
-        assert(parameters.contains(label));
-        int partId;
-        const auto [fst, snd] = parameters.equal_range(label);
-        for (auto b = fst; b != snd; ++b) {
-            partId = atoi(b->second.std_str().c_str());
-        }
-        try {
-            const auto content = request->readBodyToString();
-            pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
+        if (parameters.contains(label)) {
+            // multipart upload
+            int partId;
+            const auto [fst, snd] = parameters.equal_range(label);
+            for (auto b = fst; b != snd; ++b) {
+                partId = atoi(b->second.std_str().c_str());
+            }
+            try {
+                const auto content = request->readBodyToString();
+                pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
 
-            auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
+                auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
 
-            tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
-                pqxx::params{fileId, partId, bin_str, bin_str.size()});
-            tx.exec("UPDATE BufferedFiles SET size = size + $1 WHERE file_id = $2", pqxx::params{bin_str.size(), fileId});
-            tx.commit();
-            auto response = createResponse(Status::CODE_200, "");
-            response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
+                tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
+                    pqxx::params{fileId, partId, bin_str, bin_str.size()});
+                tx.exec("UPDATE BufferedFiles SET size = size + $1 WHERE file_id = $2", pqxx::params{bin_str.size(), fileId});
+                tx.commit();
+                auto response = createResponse(Status::CODE_200, "");
+                response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
 
-            return response;
-        }catch (const std::exception& e) {
-            std::cout << e.what() << std::endl;
-            return createResponse(Status::CODE_500, "");
+                return response;
+            }catch (const std::exception& e) {
+                std::cout << e.what() << std::endl;
+                return createResponse(Status::CODE_500, "");
+            }
+        }else {
+            // single part upload
+            try {
+                const auto content = request->readBodyToString();
+                std::cout << content.get()->size() << std::endl;
+                pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
+                tx.exec("INSERT INTO BufferedFiles(file_name, finalized, size) VALUES ($1, $2, $3)",
+                    pqxx::params{fileName->c_str(), true, bin_str.size()});
+                auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
+                tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
+                    pqxx::params{fileId, 0, bin_str, bin_str.size()});
+                tx.commit();
+                auto response = createResponse(Status::CODE_200, "");
+                response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
+
+                return response;
+            } catch (const std::exception& e) {
+                std::cout << e.what() << std::endl;
+                return createResponse(Status::CODE_500, "");
+            }
         }
     }
 
