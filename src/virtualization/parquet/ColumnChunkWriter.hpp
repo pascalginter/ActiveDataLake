@@ -38,8 +38,9 @@ private:
 
         const int32_t n = array->length();
         size_t i=tupleOffset;
-        for (; i!=n && curr_offset < maxSize; i++) {
+        for (; i!=n; i++) {
             int32_t length = offsets[i+1] - offsets[i];
+            if (curr_offset + length + 4 >= maxSize) break;
             memcpy(buffer + curr_offset, &length, sizeof(int32_t));
             curr_offset += 4;
             memcpy(buffer + curr_offset, src + offsets[i], length);
@@ -63,9 +64,9 @@ public:
             memcpy(buffer, header.data(), header.size());
         }
 
-        const uint64_t n = std::min(array->length(), maxSize);
-        for (int i=tupleOffset; i!=n ; i++) {
-            static_cast<char*>(buffer)[offset + i] = data[4 * i];
+        const uint64_t n = std::min(array->length() - tupleOffset, maxSize - offset);
+        for (int i=0; i!=n ; i++) {
+            static_cast<char*>(buffer)[offset + i] = data[4 * (tupleOffset + i)];
         }
         return {offset + n, tupleOffset + n};
     }
