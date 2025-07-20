@@ -149,7 +149,7 @@ public:
                 auto columnChunkMeta = state.parquetMetadata->RowGroup(rowgroup)->ColumnChunk(j);
                 size_t chunkBegin = columnChunkMeta->has_dictionary_page() ?
                     columnChunkMeta->dictionary_page_offset() : columnChunkMeta->data_page_offset();
-
+                std::cout << j << " " << columnChunkMeta->has_dictionary_page() << std::endl;
                 if (columnChunkMeta->has_dictionary_page()
                     && !(columnChunkMeta->dictionary_page_offset() > byteRange.end
                         || columnChunkMeta->data_page_offset() < byteRange.begin)) {
@@ -203,7 +203,7 @@ public:
                                 tupleOffset = 0;
                                 byteRange.begin = chunkEnd + 1;
                                 std::cout << "chunk done" << std::endl;
-                                if (chunk == state.combinedChunks - 1){
+                                if (chunk == state.combinedChunks - 1 || chunkI == state.metadata->num_chunks - 1){
                                     dictionaryConstructed = false;
                                     dictionaryFinished = false;
                                 }
@@ -282,7 +282,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     }
 
 public:
-    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 2) :
+    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 32) :
             state(), directoryReader(path), path(path),
             columnReaders([path, this]() {
                 auto localReaders = std::make_shared<std::vector<btrblocks::arrow::ColumnStreamReader>>();
