@@ -86,9 +86,11 @@ class LazyReadCallback : public oatpp::data::stream::ReadCallback {
     LazilyTransformedFileState& state;
     std::shared_ptr<std::vector<btrblocks::arrow::ColumnStreamReader>> localReaders;
     S3InterfaceUtils::ByteRange byteRange;
+    size_t initialBegin;
 
     int i=0;
     int j=0;
+    int chunk = 0;
     bool dictionaryConstructed = false;
     bool dictionaryFinished = false;
     size_t tupleOffset = 0;
@@ -98,11 +100,12 @@ class LazyReadCallback : public oatpp::data::stream::ReadCallback {
 
     ColumnChunkWriter::WriteResult writeChunk(void* buffer, size_t maxSize, size_t valueOffset, int64_t chunkBegin, int64_t chunkEnd, S3InterfaceUtils::ByteRange byteRange, const std::shared_ptr<arrow::Array>& arr, bool isDictionaryPage, uint64_t unique_values = 0) {
         if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
-            const int64_t begin = std::max(chunkBegin, byteRange.begin);
-            const int64_t end = std::min(chunkEnd, byteRange.end);
+            //const int64_t begin = std::max(chunkBegin, byteRange.begin);
+            //const int64_t end = std::min(chunkEnd, byteRange.end);
+            //std::cout << begin << " " <<  chunkBegin << std::endl;
             // should not be needed, but warns if a reader does something unexpected
-            assert(begin == chunkBegin);
-            assert(end == chunkEnd);
+            //assert(begin == chunkBegin);
+            //assert(end == chunkEnd);
 
             if (arrow::is_dictionary(arr->type_id())) {
                 const uint8_t byteLength = (std::bit_width(unique_values) + 7) / 8;
@@ -122,9 +125,7 @@ public:
     LazyReadCallback(LazilyTransformedFileState& state,
         std::shared_ptr<std::vector<btrblocks::arrow::ColumnStreamReader>> readers,
         S3InterfaceUtils::ByteRange byteRange)
-      : state(state), localReaders(readers), byteRange(byteRange) {
-        std::cout << "meta " << state.metadata << std::endl;
-    }
+      : state(state), localReaders(readers), byteRange(byteRange), initialBegin(byteRange.begin){}
 
 
     oatpp::v_io_size read(void* buffer, oatpp::v_io_size count, oatpp::async::Action& action) override {
@@ -142,6 +143,7 @@ public:
         // std::cout << "total " << state.metadata->num_chunks << " inc " << state.combinedChunks << std::endl;
         for ( ; i<state.metadata->num_chunks; i+=state.combinedChunks) {
             int rowgroup = i / state.combinedChunks;
+            std::cout << "loop " <<  i << " " << rowgroup << std::endl;
             for ( ; j!=state.metadata->num_columns; j++) {
                 // std::cout << "i=" << i << " " << "j=" << j << std::endl;
                 auto columnChunkMeta = state.parquetMetadata->RowGroup(rowgroup)->ColumnChunk(j);
@@ -153,26 +155,28 @@ public:
                         || columnChunkMeta->data_page_offset() < byteRange.begin)) {
                     if (!dictionaryConstructed){
                         arrays.clear();
+                        std::cout << "array size " << arrays.size() << std::endl; 
                         arrow::StringBuilder builder;
                         for (int chunk=0; chunk!=state.combinedChunks && i+chunk<state.metadata->num_chunks; chunk++) {
                             const int chunkI = i + chunk;
-                            std::shared_ptr<arrow::Array> arr;
-                            auto status = (*localReaders)[j].Read(chunkI, &arr);
-                            assert(status.ok() && arr != nullptr);
-                            arrays.push_back(arr);
-                            if (arrow::is_dictionary(arr->type_id())) {
-                                auto dictArray = std::static_pointer_cast<arrow::DictionaryArray>(arr)->dictionary();
+                            std::shared_ptr<arrow::Array> dictArr;
+                            auto status = (*localReaders)[j].Read(chunkI, &dictArr);
+                            assert(status.ok() && dictArr != nullptr);
+                            arrays.push_back(dictArr);
+                            if (arrow::is_dictionary(dictArr->type_id())) {
+                                auto dictArray = std::static_pointer_cast<arrow::DictionaryArray>(dictArr)->dictionary();
                                 status = builder.AppendArraySlice(*dictArray->data(), 0, dictArray->length());
                             }
                         }
 
                         auto status = builder.Finish(&dictionaryArr);
+                        std::cout << "dictionary length" << dictionaryArr->length() << std::endl;
                         dictionaryConstructed = true;
                     }
 
                     const int64_t dictionaryPageSize = columnChunkMeta->data_page_offset() - columnChunkMeta->dictionary_page_offset();
                     if (!dictionaryFinished){
-                        auto writeResult = writeChunk(buffer, count, tupleOffset, chunkBegin, chunkBegin + dictionaryPageSize - 1, byteRange, dictionaryArr, true, dictionaryPageSize);
+                        auto writeResult = writeChunk(buffer, count, tupleOffset, chunkBegin, chunkBegin + dictionaryPageSize - 1, byteRange, dictionaryArr, true);
                         tupleOffset = writeResult.tuples;
                         if (tupleOffset == dictionaryArr->length()){
                             tupleOffset = 0;
@@ -183,17 +187,26 @@ public:
                     }
                     
                     chunkBegin += dictionaryPageSize;
+                }
+
+                if (columnChunkMeta->has_dictionary_page()){
                     for (int chunk=0; chunk!=state.combinedChunks && i+chunk<state.metadata->num_chunks; chunk++) {
                         const int chunkI = i + chunk;
                         int64_t chunkEnd = chunkBegin + state.uncompressedSizes[j][chunkI] - 1;
                         if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
+                            std::cout << "working on " << i << " " << j << " " << chunk << std::endl;
+                            std::cout << byteRange.begin << " " << chunkBegin << " "  << chunkEnd << " " << byteRange.end << std::endl;
                             auto writeResult = writeChunk(buffer, count, tupleOffset, chunkBegin, chunkEnd, byteRange, arrays[chunkI - i], false, dictionaryArr->length());
+                            std::cout << "wrote " << writeResult.tuples << std::endl;
                             tupleOffset = writeResult.tuples;
                             if (tupleOffset == arrays[chunkI - i]->length()) {
                                 tupleOffset = 0;
                                 byteRange.begin = chunkEnd + 1;
-                                dictionaryConstructed = false;
-                                dictionaryFinished = false;
+                                std::cout << "chunk done" << std::endl;
+                                if (chunk == state.combinedChunks - 1){
+                                    dictionaryConstructed = false;
+                                    dictionaryFinished = false;
+                                }
                             }
                             std::cout << "from dictionary encoded chunk " << writeResult.bytes << std::endl;
                             return writeResult.bytes;
@@ -205,17 +218,15 @@ public:
                     for (int chunk = 0; chunk!=state.combinedChunks && i+chunk<state.metadata->num_chunks; chunk++) {
                         const int chunkI = i + chunk;
                         int64_t chunkEnd = chunkBegin + state.uncompressedSizes[j][chunkI] - 1;
-                        // std::cout << byteRange.begin << " " << chunkBegin << " "  << chunkEnd << " " << byteRange.end << std::endl;
+                        //std::cout << byteRange.begin << " " << chunkBegin << " "  << chunkEnd << " " << byteRange.end << std::endl;
                         if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
-                            // std::cout << byteRange.begin << " " << chunkBegin << " "  << chunkEnd << " " << byteRange.end << std::endl;
                             if (tupleOffset == 0) {
                                 auto status = (*localReaders)[j].Read(chunkI, &arr);
                             }
-                            auto writeResult = writeChunk(buffer, count, tupleOffset, chunkBegin, chunkEnd, byteRange, arr, false, state.uncompressedSizes[j][chunkI]);
+                            auto writeResult = writeChunk(buffer, count, tupleOffset, chunkBegin, chunkEnd, byteRange, arr, false);
                             tupleOffset = writeResult.tuples;
                             if (tupleOffset == arr->length()) {
                                 tupleOffset = 0;
-                                chunk = (chunk + 1) % state.combinedChunks;
                                 byteRange.begin = chunkEnd + 1;
                             }
                             std::cout << "from chunk " << writeResult.bytes << " (" << writeResult.tuples << std::endl;
@@ -271,7 +282,7 @@ class LazilyTransformedFile final : public VirtualizedFile {
     }
 
 public:
-    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 16) :
+    explicit LazilyTransformedFile(const std::string path, int combinedChunks = 2) :
             state(), directoryReader(path), path(path),
             columnReaders([path, this]() {
                 auto localReaders = std::make_shared<std::vector<btrblocks::arrow::ColumnStreamReader>>();
