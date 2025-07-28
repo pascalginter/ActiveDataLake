@@ -129,33 +129,27 @@ public:
 
 
     oatpp::v_io_size read(void* buffer, oatpp::v_io_size count, oatpp::async::Action& action) override {
-        std::cout << "max (" << byteRange.begin << ", " << byteRange.end << ") "<< count << std::endl;
+        // std::cout << "max (" << byteRange.begin << ", " << byteRange.end << ") "<< count << std::endl;
         if (byteRange.begin == 0) {
             static_cast<char*>(buffer)[0] = 'P';
             static_cast<char*>(buffer)[1] = 'A';
             static_cast<char*>(buffer)[2] = 'R';
             static_cast<char*>(buffer)[3] = '1';
             byteRange.begin = 4;
-            std::cout << 4 << std::endl;
             return 4;
         }
 
-        // std::cout << "total " << state.metadata->num_chunks << " inc " << state.combinedChunks << std::endl;
         for ( ; i<state.metadata->num_chunks; i+=state.combinedChunks) {
             int rowgroup = i / state.combinedChunks;
-            std::cout << "loop " <<  i << " " << rowgroup << std::endl;
             for ( ; j!=state.metadata->num_columns; j++) {
-                // std::cout << "i=" << i << " " << "j=" << j << std::endl;
                 auto columnChunkMeta = state.parquetMetadata->RowGroup(rowgroup)->ColumnChunk(j);
                 size_t chunkBegin = columnChunkMeta->has_dictionary_page() ?
                     columnChunkMeta->dictionary_page_offset() : columnChunkMeta->data_page_offset();
-                std::cout << j << " " << columnChunkMeta->has_dictionary_page() << std::endl;
                 if (columnChunkMeta->has_dictionary_page()
                     && !(columnChunkMeta->dictionary_page_offset() > byteRange.end
                         || columnChunkMeta->data_page_offset() < byteRange.begin)) {
                     if (!dictionaryConstructed){
                         arrays.clear();
-                        std::cout << "array size " << arrays.size() << std::endl; 
                         arrow::StringBuilder builder;
                         for (int chunk=0; chunk!=state.combinedChunks && i+chunk<state.metadata->num_chunks; chunk++) {
                             const int chunkI = i + chunk;
@@ -170,7 +164,6 @@ public:
                         }
 
                         auto status = builder.Finish(&dictionaryArr);
-                        std::cout << "dictionary length" << dictionaryArr->length() << std::endl;
                         dictionaryConstructed = true;
                     }
 
@@ -182,7 +175,6 @@ public:
                             tupleOffset = 0;
                             dictionaryFinished = true;
                         }
-                        std::cout << "from dictionary " << writeResult.bytes << std::endl;
                         return writeResult.bytes;
                     }
                     
@@ -194,21 +186,16 @@ public:
                         const int chunkI = i + chunk;
                         int64_t chunkEnd = chunkBegin + state.uncompressedSizes[j][chunkI] - 1;
                         if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
-                            std::cout << "working on " << i << " " << j << " " << chunk << std::endl;
-                            std::cout << byteRange.begin << " " << chunkBegin << " "  << chunkEnd << " " << byteRange.end << std::endl;
                             auto writeResult = writeChunk(buffer, count, tupleOffset, chunkBegin, chunkEnd, byteRange, arrays[chunkI - i], false, dictionaryArr->length());
-                            std::cout << "wrote " << writeResult.tuples << std::endl;
                             tupleOffset = writeResult.tuples;
                             if (tupleOffset == arrays[chunkI - i]->length()) {
                                 tupleOffset = 0;
                                 byteRange.begin = chunkEnd + 1;
-                                std::cout << "chunk done" << std::endl;
                                 if (chunk == state.combinedChunks - 1 || chunkI == state.metadata->num_chunks - 1){
                                     dictionaryConstructed = false;
                                     dictionaryFinished = false;
                                 }
                             }
-                            std::cout << "from dictionary encoded chunk " << writeResult.bytes << std::endl;
                             return writeResult.bytes;
                         }
                         // Prepare next chunk
@@ -218,7 +205,6 @@ public:
                     for (int chunk = 0; chunk!=state.combinedChunks && i+chunk<state.metadata->num_chunks; chunk++) {
                         const int chunkI = i + chunk;
                         int64_t chunkEnd = chunkBegin + state.uncompressedSizes[j][chunkI] - 1;
-                        //std::cout << byteRange.begin << " " << chunkBegin << " "  << chunkEnd << " " << byteRange.end << std::endl;
                         if (!(chunkEnd < byteRange.begin || chunkBegin > byteRange.end)) {
                             if (tupleOffset == 0) {
                                 auto status = (*localReaders)[j].Read(chunkI, &arr);
@@ -229,7 +215,6 @@ public:
                                 tupleOffset = 0;
                                 byteRange.begin = chunkEnd + 1;
                             }
-                            std::cout << "from chunk " << writeResult.bytes << " (" << writeResult.tuples << std::endl;
                             return writeResult.bytes;
                         }
                         // Prepare next chunk
@@ -246,7 +231,6 @@ public:
             memcpy(buffer, state.serializedParquetMetadata.data() + tupleOffset, n);
             tupleOffset += n;
             if (n == 0) tupleOffset = 0;
-            std::cout << "from metadata " << n << std::endl;
             return n;
         }
         // TODO allow partial footer requests
@@ -255,11 +239,9 @@ public:
             std::string footer = "xxxxPAR1";
             memcpy(footer.data(), &s, 4);
             memcpy(buffer, footer.data(), footer.size());
-            std::cout << "from footer 8" << std::endl;
             byteRange.begin = state.size;
             return 8;
         }
-        std::cout << "done with request" << std::endl;
         return 0;
     }
 };

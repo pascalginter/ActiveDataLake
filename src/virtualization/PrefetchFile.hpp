@@ -1,7 +1,7 @@
+#pragma once
 #include <aws/s3-crt/S3CrtClient.h>
 #include <aws/s3-crt/model/GetObjectRequest.h>
 #include <aws/s3-crt/model/HeadObjectRequest.h>
-#include <aws/s3-crt/S3CrtErrors.h>
 
 #include "VirtualizedFile.hpp"
 
@@ -60,7 +60,7 @@ public:
         return size_;
     }
 
-    std::shared_ptr<std::string> getRange(S3InterfaceUtils::ByteRange byteRange) override {
+    std::shared_ptr<oatpp::data::stream::ReadCallback> getRange(S3InterfaceUtils::ByteRange byteRange) override {
         size_t begin = byteRange.begin / increment, end = (byteRange.end + increment - 1) / increment;
         for (size_t i=begin; i!=end; i++) {
             while (!outstandingRequests[i].load()) {

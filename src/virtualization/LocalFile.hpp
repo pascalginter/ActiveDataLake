@@ -73,8 +73,7 @@ public:
         return file.size;
     }
 
-    std::shared_ptr<oatpp::data::stream::ReadCallback> getRange(S3InterfaceUtils::ByteRange byteRange) override {
-        // Assuming you parsed the range already
+    std::shared_ptr<oatpp::data::stream::ReadCallback> getRange(S3InterfaceUtils::ByteRange byteRange) override{
         auto callback = std::make_shared<MMapRangeReadCallback>(
             file.begin() + byteRange.begin,
             byteRange.size()
