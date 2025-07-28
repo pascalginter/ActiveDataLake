@@ -1,6 +1,7 @@
 #include <filesystem>
 #include <iostream>
 
+#include "LazilyTransformedFile.hpp"
 #include "LocalFile.hpp"
 
 
@@ -12,17 +13,22 @@ std::shared_ptr<VirtualizedFile> VirtualizedFile::createFileAbstraction(std::str
     if (std::filesystem::exists(localPathPrefix + tableName + ".parquet")) {
         return std::make_shared<LocalFile>(localPathPrefix + tableName + ".parquet");
     }
-}/*
+    std::cout << "here" << std::endl;
+    if (std::filesystem::exists(localPathPrefix + tableName)) {
+        return std::make_shared<LocalFile>(localPathPrefix + tableName);
+    }
+
     if (std::filesystem::exists(localPathPrefix + tableName)){
         std::cout << localPathPrefix + tableName + "/metadata" << std::endl;
         assert(std::filesystem::exists(localPathPrefix + tableName + "/metadata"));
         if constexpr (LAZY_COMPUTATION){
             return std::make_shared<LazilyTransformedFile>(localPathPrefix + tableName);
         }else{
-            return std::make_shared<MemoryBufferedTransformedFile>(localPathPrefix + tableName);
+            //return std::make_shared<MemoryBufferedTransformedFile>(localPathPrefix + tableName);
         }
     }
-    
+}
+    /*
     if constexpr (PREFETCH) {
         return std::make_shared<PrefetchFile>(tableName);
     } else {
@@ -31,17 +37,18 @@ std::shared_ptr<VirtualizedFile> VirtualizedFile::createFileAbstraction(std::str
     std::cout << "file not found " << tableName << std::endl;
     return nullptr;
 }
+*/
 
 thread_local std::string LazilyTransformedFile::buffer = "";
 thread_local std::vector<char> LazilyTransformedFile::curr_buffer = {};
-*/
+
 thread_local std::shared_ptr<std::string> LocalFile::result = std::make_shared<std::string>();
-/*
-thread_local std::shared_ptr<std::string> RemoteFile::result = std::make_shared<std::string>();
+
+/*thread_local std::shared_ptr<std::string> RemoteFile::result = std::make_shared<std::string>();
 
 thread_local std::shared_ptr<std::string> PostgresBufferedFile::result = std::make_shared<std::string>();
 thread_local pqxx::connection PostgresBufferedFile::conn =
-    pqxx::connection{"postgresql://pascal-ginter@localhost/iceberg"};;
+pqxx::connection{"postgresql://ubuntu@localhost/iceberg"};;
 
 std::shared_ptr<std::string> PrefetchFile::result = std::make_shared<std::string>("");
 */

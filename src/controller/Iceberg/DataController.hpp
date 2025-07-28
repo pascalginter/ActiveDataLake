@@ -23,10 +23,11 @@
 #include OATPP_CODEGEN_BEGIN(ApiController) //<- Begin Codegen
 
 #include "oatpp/json/Serializer.hpp"
-#include "oatpp/web/protocol/http/outgoing/StreamingBody.hpp"
 #include <oatpp/async/Executor.hpp>
 
 #include "../../virtualization/VirtualizedFile.hpp"
+#include "../../virtualization/PostgresBufferedFile.hpp"
+#include "EvictionJob.hpp"
 
 class DataController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
@@ -81,8 +82,8 @@ public:
 
         const auto range = S3InterfaceUtils::extractRange(request, tableFiles[tableName]->size());
         std::cout << "getting data range " << range.begin << " " << range.end << " of " << tableFiles[tableName]->size() << std::endl;
-        auto response = OutgoingResponse::createShared(Status::CODE_200, std::make_shared<oatpp::web::protocol::http::outgoing::StreamingBody>(tableFiles[tableName]->getRange(range)));
-        S3InterfaceUtils::putByteSizeHeader(response, range.size());
+        auto response = createResponse(Status::CODE_200, tableFiles[tableName]->getRange(range));
+        S3InterfaceUtils::putByteSizeHeader(response, tableFiles[tableName]->size());
         return response;
     }
 
@@ -90,13 +91,33 @@ public:
             REQUEST(std::shared_ptr<IncomingRequest>, request),
             PATH(String, tableName),
             PATH(String, fileName)) {
-        std::cout << fileName.getValue("") << std::endl;
-        /*if (fileName == "buffered.parquet" && pbf.size()) {
-            auto response = createResponse(Status::CODE_200, "");
-           // S3InterfaceUtils::putByteSizeHeader(response, pbf.size());
-            return response;
-        }*/
-        return createResponse(Status::CODE_404, "");
+        std::string pathFileName = *tableName + "/" + *fileName;
+        if (tableFiles.find(pathFileName) == tableFiles.end()){
+            tableFiles[pathFileName] = VirtualizedFile::createFileAbstraction(pathFileName);
+        }
+        auto& file = tableFiles[pathFileName];
+        if (file == nullptr) {
+            return createResponse(Status::CODE_404, "Not found");
+        }
+        auto response = createResponse(Status::CODE_200, "");
+        S3InterfaceUtils::putByteSizeHeader(response, file->size());
+        return response;
+    }
+
+    ENDPOINT("GET", "/data/{tableName}/{fileName}", getNewData,
+             REQUEST(std::shared_ptr<IncomingRequest>, request),
+             PATH(String, tableName),
+             PATH(String, fileName)){
+        std::string pathFileName = *tableName + "/" + *fileName;
+        if (!tableFiles.contains(pathFileName)){
+            tableFiles[tableName] = VirtualizedFile::createFileAbstraction(pathFileName);
+        }
+
+        const auto range = S3InterfaceUtils::extractRange(request, tableFiles[pathFileName]->size());
+        std::cout << "getting data range " << range.begin << " " << range.end << " of " << tableFiles[pathFileName]->size() << std::endl;
+        auto response = createResponse(Status::CODE_200, tableFiles[pathFileName]->getRange(range));
+        S3InterfaceUtils::putByteSizeHeader(response, tableFiles[pathFileName]->size());
+        return response;
     }
 
     ENDPOINT("DELETE", "/data/{tableName}/{fileName}", deleteData,
@@ -113,55 +134,32 @@ public:
          PATH(String, tableName),
          PATH(String, fileName)) {
         pqxx::work tx{conn};
-        std::cout << "put matched " << std::endl;
-        std::cout << *fileName << std::endl;
+        std::cout << "put matched" << std::endl;
         auto parameters = request->getQueryParameters().getAll();
         const oatpp::data::share::StringKeyLabel label("partNumber");
-        if (parameters.contains(label)) {
-            // multipart upload
-            int partId;
-            const auto [fst, snd] = parameters.equal_range(label);
-            for (auto b = fst; b != snd; ++b) {
-                partId = atoi(b->second.std_str().c_str());
-            }
-            try {
-                const auto content = request->readBodyToString();
-                pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
+        assert(parameters.contains(label));
+        int partId;
+        const auto [fst, snd] = parameters.equal_range(label);
+        for (auto b = fst; b != snd; ++b) {
+            partId = atoi(b->second.std_str().c_str());
+        }
+        try {
+            const auto content = request->readBodyToString();
+            pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
 
-                auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
+            auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
 
-                tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
-                    pqxx::params{fileId, partId, bin_str, bin_str.size()});
-                tx.exec("UPDATE BufferedFiles SET size = size + $1 WHERE file_id = $2", pqxx::params{bin_str.size(), fileId});
-                tx.commit();
-                auto response = createResponse(Status::CODE_200, "");
-                response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
+            tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
+                pqxx::params{fileId, partId, bin_str, bin_str.size()});
+            tx.exec("UPDATE BufferedFiles SET size = size + $1 WHERE file_id = $2", pqxx::params{bin_str.size(), fileId});
+            tx.commit();
+            auto response = createResponse(Status::CODE_200, "");
+            response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
 
-                return response;
-            }catch (const std::exception& e) {
-                std::cout << e.what() << std::endl;
-                return createResponse(Status::CODE_500, "");
-            }
-        }else {
-            // single part upload
-            try {
-                const auto content = request->readBodyToString();
-                std::cout << content.get()->size() << std::endl;
-                pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
-                tx.exec("INSERT INTO BufferedFiles(file_name, finalized, size) VALUES ($1, $2, $3)",
-                    pqxx::params{fileName->c_str(), true, bin_str.size()});
-                auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
-                tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
-                    pqxx::params{fileId, 0, bin_str, bin_str.size()});
-                tx.commit();
-                auto response = createResponse(Status::CODE_200, "");
-                response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
-
-                return response;
-            } catch (const std::exception& e) {
-                std::cout << e.what() << std::endl;
-                return createResponse(Status::CODE_500, "");
-            }
+            return response;
+        }catch (const std::exception& e) {
+            std::cout << e.what() << std::endl;
+            return createResponse(Status::CODE_500, "");
         }
     }
 
@@ -202,7 +200,7 @@ public:
             // finalize a multipart upload
             tx.exec("UPDATE BufferedFiles SET finalized = true WHERE file_name = $1", pqxx::params{*fileName});
             tx.commit();
-            //executor.execute<EvictionJob>();
+            executor.execute<EvictionJob>();
             return createResponse(Status::CODE_200, "");
         }
     }

@@ -4,11 +4,11 @@
 #include "../../virtualization/PostgresBufferedFile.hpp"
 
 class EvictionJob final : public oatpp::async::Coroutine<EvictionJob> {
-    static thread_local pqxx::connection conn;
-    static int counter;
+    //static thread_local pqxx::connection conn;
+    //static int counter;
 public:
     Action act() override {
-        pqxx::work tx(conn);
+        /*pqxx::work tx(conn);
         constexpr int threshold = 1024 * 1024 * 256;
         const auto totalSize = tx.exec("SELECT SUM(size) FROM BufferedFiles WHERE finalized").one_row()[0].as<int>();
         std::cout << totalSize << " " << totalSize - threshold <<  std::endl
@@ -34,7 +34,7 @@ public:
                           "VALUES ($1, $2, $3)", pqxx::params(fileName, table->num_rows(), fileSize));
             std::cout << "Deleted successfully" << std::endl;
         }
-        tx.commit();
+        tx.commit();*/
         return finish();
     }
 };
