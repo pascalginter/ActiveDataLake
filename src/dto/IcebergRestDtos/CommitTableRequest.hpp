@@ -23,9 +23,9 @@ inline void to_json(nlohmann::json& j, const CommitTableRequest& r) {
 }
 
 inline void from_json(const nlohmann::json& j, CommitTableRequest& r) {
-    j.at("identifier").get_to(r.identifier);
-    j.at("requirements").get_to(r.requirements);
-    j.at("updates").get_to(r.updates);
+    r.identifier = j["identifier"];
+    r.requirements = j["requirements"];
+    r.updates = j["updates"];
 }
 
 #endif // ICEBERG_REST_COMMIT_TABLE_REQUEST_HPP

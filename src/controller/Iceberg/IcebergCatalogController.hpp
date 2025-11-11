@@ -63,7 +63,7 @@ public:
         const CreateNamespaceRequest cnq = nlohmann::json::parse(*request->readBodyToString());
         assert(cnq.namespaces.size() == 1);
         pqxx::work tx{conn};
-        tx.exec("INSERT INTO namespaces(name) VALUES ($1)", pqxx::params{cnq.namespaces.front()});
+        tx.exec("INSERT INTO namespace(name) VALUES ($1)", pqxx::params{cnq.namespaces.front()});
         tx.commit();
         return createResponse(Status::CODE_200);
     }
@@ -78,12 +78,11 @@ public:
         assert(tableRequest.partitionSpec && tableRequest.writeOrder);
         metadata.partitionSpecs.push_back(*tableRequest.partitionSpec);
         metadata.sortOrders.push_back(*tableRequest.writeOrder);
-        std::string serializedMetadata = nlohmann::json(metadata);
+        std::string serializedMetadata = nlohmann::json(metadata).dump();
 
         pqxx::work tx{conn};
-        tx.exec("INSERT INTO tables(table_uuid, name, last_sequence_number, last_updated_ms, current_snapshot_id) VALUES ($1, $2, $3, $4, $5)",
-               pqxx::params{uuid::generate_uuid_v4(), tableRequest.name, 0, 0, 0});
-
+        tx.exec("INSERT INTO tables(table_uuid, name, namespace, metadata, last_sequence_number, last_updated_ms, current_snapshot_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+               pqxx::params{uuid::generate_uuid_v4(), tableRequest.name, serializedMetadata, nspace->c_str(), 0, 0, 0});
         ref = metadata.currentSnapshotId;
         UpdateTableResponse response;
         response.metadata = metadata;

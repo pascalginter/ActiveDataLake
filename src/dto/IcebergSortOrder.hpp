@@ -20,8 +20,8 @@ inline void to_json(nlohmann::json& j, const IcebergSortOrder& o) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergSortOrder& o) {
-    j.at("order-id").get_to(o.orderId);
-    j.at("fields").get_to(o.fields);
+    o.orderId = j["order-id"];
+    o.fields = j["fields"];
 }
 
 #endif // ICEBERG_SORT_ORDER_HPP

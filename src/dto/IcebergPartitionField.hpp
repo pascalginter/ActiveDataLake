@@ -23,10 +23,10 @@ inline void to_json(nlohmann::json& j, const IcebergPartitionField& f) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergPartitionField& f) {
-    j.at("source-id").get_to(f.sourceId);
-    j.at("field-id").get_to(f.fieldId);
-    j.at("name").get_to(f.name);
-    j.at("transform").get_to(f.transform);
+    f.sourceId = j["source-id"];
+    f.fieldId = j["field-id"];
+    f.name = j["name"];
+    f.transform = j["transform"];
 }
 
 #endif // ICEBERG_PARTITION_FIELD_HPP

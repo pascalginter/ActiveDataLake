@@ -30,8 +30,8 @@ inline void to_json(nlohmann::json& j, const CreateTableRequest& r) {
 }
 
 inline void from_json(const nlohmann::json& j, CreateTableRequest& r) {
-    j.at("name").get_to(r.name);
-    j.at("schema").get_to(r.schema);
+    r.name = j["name"];
+    r.schema = j["schema"];
     if (j.contains("location")) r.location = j["location"];
     if (j.contains("partition-spec")) r.partitionSpec = j["partition-spec"];
     if (j.contains("write-order")) r.writeOrder = j["write-order"];

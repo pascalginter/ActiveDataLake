@@ -17,8 +17,8 @@ struct TableUpdate {
     }
 
     friend void from_json(const nlohmann::json& j, TableUpdate& u) {
-        if (j.contains("action")) j.at("action").get_to(u.action);
-        if (j.contains("snapshot")) j.at("snapshot").get_to(u.snapshot);
+        if (j.contains("action")) u.action = j["action"];
+        if (j.contains("snapshot")) u.snapshot = j["snapshot"];
     }
 };
 

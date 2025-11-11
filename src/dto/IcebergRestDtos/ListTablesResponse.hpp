@@ -20,8 +20,8 @@ inline void to_json(nlohmann::json& j, const ListTablesResponse& r) {
 }
 
 inline void from_json(const nlohmann::json& j, ListTablesResponse& r) {
-    j.at("next-page-token").get_to(r.nextPageToken);
-    j.at("identifiers").get_to(r.identifiers);
+    r.nextPageToken = j["next-page-token"];
+    r.identifiers = j["identifiers"];
 }
 
 #endif // ICEBERG_LIST_TABLES_RESPONSE_HPP

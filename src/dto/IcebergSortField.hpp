@@ -23,10 +23,10 @@ inline void to_json(nlohmann::json& j, const IcebergSortField& f) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergSortField& f) {
-    j.at("transform").get_to(f.transform);
-    j.at("source-id").get_to(f.sourceId);
-    j.at("direction").get_to(f.direction);
-    j.at("null-order").get_to(f.nullOrder);
+    f.transform = j["transform"];
+    f.sourceId = j["source-id"];
+    f.direction = j["direction"];
+    f.nullOrder = j["null-order"];
 }
 
 #endif // ICEBERG_SORT_FIELD_HPP

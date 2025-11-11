@@ -16,7 +16,7 @@ inline void to_json(nlohmann::json& j, const IcebergSnapshotSummary& s) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergSnapshotSummary& s) {
-    j.at("operation").get_to(s.operation);
+    s.operation =  j["operation"];
 }
 
 #endif // ICEBERG_SNAPSHOT_SUMMARY_HPP

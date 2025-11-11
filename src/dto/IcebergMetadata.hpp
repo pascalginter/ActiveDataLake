@@ -14,7 +14,7 @@
 struct IcebergMetadata {
     int32_t formatVersion = 2;
     std::string tableUUID = "b0dc1444-6864-46f2-b41d-1876b96d1d3f";
-    std::string location = "s3://iceberg-tps";
+    std::string location = ".";
     int64_t lastSequenceNumber = 1;
     int64_t lastUpdatedMs = 1;
     int64_t lastColumnId = 80;
@@ -51,21 +51,21 @@ inline void to_json(nlohmann::json& j, const IcebergMetadata& m) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergMetadata& m) {
-    j.at("format-version").get_to(m.formatVersion);
-    j.at("table-uuid").get_to(m.tableUUID);
-    j.at("location").get_to(m.location);
-    j.at("last-sequence-number").get_to(m.lastSequenceNumber);
-    j.at("last-updated-ms").get_to(m.lastUpdatedMs);
-    j.at("last-column-id").get_to(m.lastColumnId);
-    j.at("schemas").get_to(m.schemas);
-    j.at("current-schema-id").get_to(m.currentSchemaId);
-    j.at("partition-specs").get_to(m.partitionSpecs);
-    j.at("default-spec-id").get_to(m.defaultSpecId);
-    j.at("last-partition-id").get_to(m.lastPartitionId);
-    j.at("current-snapshot-id").get_to(m.currentSnapshotId);
-    j.at("snapshots").get_to(m.snapshots);
-    j.at("sort-orders").get_to(m.sortOrders);
-    j.at("default-sort-order-id").get_to(m.defaultSortOrderId);
+    m.formatVersion = j["format-version"];
+    m.tableUUID = j["table-uuid"];
+    m.location = j["location"];
+    m.lastSequenceNumber = j["last-sequence-number"];
+    m.lastUpdatedMs = j ["last-updated-ms"];
+    m.lastColumnId = j["last-column-id"];
+    m.schemas = j["schemas"];
+    m.currentSchemaId = j["current-schema-id"];
+    m.partitionSpecs = j["partition-specs"];
+    m.defaultSpecId = j["default-spec-id"];
+    m.lastPartitionId = j["last-partition-id"];
+    m.currentSnapshotId = j["current-snapshot-id"];
+    m.snapshots = j["snapshot"];
+    m.sortOrders = j["sort-orders"];
+    m.defaultSortOrderId = j["default-sort-order-id"];
 }
 
 #endif // ICEBERG_METADATA_HPP

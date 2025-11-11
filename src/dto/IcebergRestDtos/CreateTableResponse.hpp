@@ -19,8 +19,8 @@ inline void to_json(nlohmann::json& j, const UpdateTableResponse& r) {
 }
 
 inline void from_json(const nlohmann::json& j, UpdateTableResponse& r) {
-    j.at("metadata-location").get_to(r.metadataLocation);
-    j.at("metadata").get_to(r.metadata);
+    r.metadataLocation = j["metadata-location"];
+    r.metadata = j["metadata"];
 }
 
 #endif // ICEBERG_REST_UPDATE_TABLE_RESPONSE_HPP

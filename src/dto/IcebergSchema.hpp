@@ -20,7 +20,7 @@ inline void from_json(const nlohmann::json& j, IcebergSchema& s) {
     // Deserialize base class first
     from_json(j, static_cast<IcebergStructType&>(s));
     if (j.contains("schema-id")) {
-        j.at("schema-id").get_to(s.schemaId);
+        s.schemaId = j["schema-id"];
     }
 }
 

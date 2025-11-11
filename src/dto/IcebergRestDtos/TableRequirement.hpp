@@ -21,10 +21,10 @@ struct TableRequirement {
     }
 
     friend void from_json(const nlohmann::json& j, TableRequirement& r) {
-        if (j.contains("type")) j.at("type").get_to(r.type);
-        if (j.contains("ref")) j.at("ref").get_to(r.ref);
-        if (j.contains("snapshot-id")) j.at("snapshot-id").get_to(r.snapshotId);
-        if (j.contains("uuid")) j.at("uuid").get_to(r.uuid);
+        if (j.contains("type")) r.type = j["type"];
+        if (j.contains("ref")) r.ref = j["ref"];
+        if (j.contains("snapshot-id")) r.snapshotId = j["snapshot-id"];
+        if (j.contains("uuid")) r.uuid = j["uuid"];
     }
 };
 

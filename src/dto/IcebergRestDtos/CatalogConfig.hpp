@@ -8,8 +8,19 @@
 struct Config {
     std::vector<std::string> endpoints = {
         "GET /v1/{prefix}/namespaces",
+        "POST /v1/{prefix}/namespaces",
         "GET /v1/{prefix}/namespaces/{namespace}",
-        "GET /v1/{prefix}/namespaces/{namespace}/tables"
+        "DELETE /v1/{prefix}/namespaces/{namespace}",
+        "POST /v1/{prefix}/namespaces/{namespace}/properties",
+        "GET /v1/{prefix}/namespaces/{namespace}/tables",
+        "POST /v1/{prefix}/namespaces/{namespace}/tables",
+        "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+        "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+        "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+        "POST /v1/{prefix}/namespaces/{namespace}/register",
+        "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics",
+        "POST /v1/{prefix}/tables/rename",
+        "POST /v1/{prefix}/transactions/commit"
     };
 
     nlohmann::json defaults = nlohmann::json::object();
@@ -26,12 +37,12 @@ inline void to_json(nlohmann::json& j, const Config& c) {
 }
 
 inline void from_json(const nlohmann::json& j, Config& c) {
-    j.at("endpoints").get_to(c.endpoints);
+    c.endpoints = j["endpoints"];
     if (j.contains("defaults")) {
-        c.defaults = j.at("defaults");
+        c.defaults = j["defaults"];
     }
     if (j.contains("overrides")) {
-        c.overrides = j.at("overrides");
+        c.overrides = j["overrides"];
     }
 }
 

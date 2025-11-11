@@ -28,12 +28,12 @@ inline void to_json(nlohmann::json& j, const IcebergSnapshot& s) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergSnapshot& s) {
-    j.at("snapshot-id").get_to(s.snapshotId);
-    j.at("sequence-number").get_to(s.sequenceNumber);
-    j.at("timestamp-ms").get_to(s.timestampMs);
-    j.at("summary").get_to(s.summary);
-    j.at("manifest-list").get_to(s.manifestList);
-    j.at("schema-id").get_to(s.schemaId);
+    s.snapshotId = j["snapshot-id"];
+    s.sequenceNumber = j["sequence-number"];
+    s.timestampMs = j["timestamp-ms"];
+    s.summary = j["summary"];
+    s.manifestList = j["manifest-list"];
+    s.schemaId = j["schema-id"];
 }
 
 #endif // ICEBERG_SNAPSHOT_HPP

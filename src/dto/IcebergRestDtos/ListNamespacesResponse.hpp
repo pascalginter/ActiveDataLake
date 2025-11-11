@@ -19,8 +19,8 @@ inline void to_json(nlohmann::json& j, const ListNamespacesResponse& r) {
 }
 
 inline void from_json(const nlohmann::json& j, ListNamespacesResponse& r) {
-    j.at("next-page-token").get_to(r.nextPageToken);
-    j.at("namespaces").get_to(r.namespaces);
+    r.nextPageToken = j["next-page-token"];
+    r.namespaces = j["namespaces"];
 }
 
 #endif // ICEBERG_LIST_NAMESPACES_RESPONSE_HPP

@@ -22,9 +22,9 @@ inline void to_json(nlohmann::json& j, const LoadTableResponse& r) {
 }
 
 inline void from_json(const nlohmann::json& j, LoadTableResponse& r) {
-    if (j.contains("metadata-location")) j.at("metadata-location").get_to(r.metadataLocation);
-    if (j.contains("metadata")) j.at("metadata").get_to(r.metadata);
-    if (j.contains("config")) j.at("config").get_to(r.config);
+    if (j.contains("metadata-location")) r.metadataLocation = j["metadata-location"];
+    if (j.contains("metadata")) r.metadata = j["metadata"];
+    if (j.contains("config")) r.config = j["config"];
 }
 
 #endif // ICEBERG_REST_LOAD_TABLE_HPP

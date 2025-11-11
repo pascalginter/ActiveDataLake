@@ -24,10 +24,10 @@ inline void to_json(nlohmann::json& j, const IcebergField& f) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergField& f) {
-    j.at("id").get_to(f.id);
-    j.at("name").get_to(f.name);
-    j.at("required").get_to(f.required);
-    j.at("type").get_to(f.type);
+    f.id = j["id"];
+    f.name = j["name"];
+    f.required = j["required"];
+    f.type = j["type"];
 }
 
 #endif // ICEBERG_FIELD_HPP

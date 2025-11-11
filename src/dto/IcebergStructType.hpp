@@ -20,8 +20,8 @@ inline void to_json(nlohmann::json& j, const IcebergStructType& s) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergStructType& s) {
-    j.at("type").get_to(s.type);
-    j.at("fields").get_to(s.fields);
+    s.type = j["type"];
+    s.fields = j["fields"];
 }
 
 #endif // ICEBERG_STRUCT_TYPE_HPP

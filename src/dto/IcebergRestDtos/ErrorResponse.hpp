@@ -20,9 +20,9 @@ inline void to_json(nlohmann::json& j, const ErrorResponse& r) {
 }
 
 inline void from_json(const nlohmann::json& j, ErrorResponse& r) {
-    j["error"].at("message").get_to(r.message);
-    j["error"].at("type").get_to(r.type);
-    j["error"].at("code").get_to(r.code);
+    r.message = j["error"]["message"];
+    r.type = j["error"]["type"];
+    r.code = j["error"]["code"];
 }
 
 #endif // ICEBERG_REST_ERROR_RESPONSE_HPP

@@ -15,7 +15,7 @@ inline void to_json(nlohmann::json& j, const CreateNamespaceRequest& r) {
 }
 
 inline void from_json(const nlohmann::json& j, CreateNamespaceRequest& r) {
-    j.at("namespace").get_to(r.namespaces);
+    r.namespaces = j["namespace"];
 }
 
 #endif // ICEBERG_REST_CREATE_NAMESPACE_REQUEST_HPP

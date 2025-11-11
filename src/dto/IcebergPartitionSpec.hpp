@@ -20,8 +20,8 @@ inline void to_json(nlohmann::json& j, const IcebergPartitionSpec& s) {
 }
 
 inline void from_json(const nlohmann::json& j, IcebergPartitionSpec& s) {
-    j.at("spec-id").get_to(s.specId);
-    j.at("fields").get_to(s.fields);
+    s.specId = j["spec-id"];
+    s.fields = j["fields"];
 }
 
 #endif // ICEBERG_PARTITION_SPEC_HPP

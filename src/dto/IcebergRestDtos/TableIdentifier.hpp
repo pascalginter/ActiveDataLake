@@ -19,8 +19,8 @@ inline void to_json(nlohmann::json& j, const TableIdentifier& t) {
 }
 
 inline void from_json(const nlohmann::json& j, TableIdentifier& t) {
-    if (j.contains("namespace")) j.at("namespace").get_to(t.nspace);
-    if (j.contains("name")) j.at("name").get_to(t.name);
+    if (j.contains("namespace")) t.nspace = j["namespace"];
+    if (j.contains("name")) t.name = j["name"];
 }
 
 #endif // ICEBERG_REST_TABLE_IDENTIFIER_HPP

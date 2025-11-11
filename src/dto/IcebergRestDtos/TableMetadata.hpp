@@ -19,9 +19,9 @@ struct TableMetadata {
     }
 
     friend void from_json(const nlohmann::json& j, TableMetadata& t) {
-        if (j.contains("format-version")) j.at("format-version").get_to(t.formatVersion);
-        if (j.contains("table-uuid")) j.at("table-uuid").get_to(t.tableUuid);
-        if (j.contains("location")) j.at("location").get_to(t.location);
+        if (j.contains("format-version")) t.formatVersion = j["format-version"];
+        if (j.contains("table-uuid")) t.tableUuid = j["table-uuid"];
+        if (j.contains("location")) t.location = j["location"];
     }
 };
 
