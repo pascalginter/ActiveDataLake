@@ -1,3 +1,11 @@
+DROP TABLE BufferedFiles CASCADE;
+DROP TABLE BufferedData CASCADE;
+DROP TABLE Snapshot CASCADE;
+DROP TABLE ManifestEntry CASCADE;
+DROP TABLE Schema CASCADE;
+DROP TABLE Tables CASCADE;
+DROP TABLE Namespace CACADE;
+
 CREATE TABLE BufferedFiles(
     file_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     file_name VARCHAR,
@@ -25,6 +33,16 @@ CREATE VIEW BufferedView AS (
     WHERE d.file_id = f.file_id AND f.finalized
 );
 
+CREATE TABLE Tables(
+                       table_uuid VARCHAR PRIMARY KEY,
+                       name VARCHAR NOT NULL,
+                       last_sequence_number INT NOT NULL,
+                       last_updated_ms INT NOT NULL,
+                       current_snapshot_id INT NOT NULL,
+                       namespace VARCHAR NOT NULL,
+                       metadata VARCHAR NOT NULL
+);
+
 CREATE TABLE Snapshot(
     table_uuid VARCHAR NOT NULL REFERENCES tables,
     snapshot_id INT NOT NULL,
@@ -41,12 +59,11 @@ CREATE TABLE ManifestEntry(
     file_size_in_bytes INT
 );
 
-CREATE TABLE Tables(
-    table_uuid VARCHAR PRIMARY KEY,
-    name VARCHAR NOT NULL,
-    last_sequence_number INT NOT NULL,
-    last_updated_ms INT NOT NULL,
-    current_snapshot_id INT NOT NULL
+
+
+
+CREATE TABLE Namespace(
+    name VARCHAR PRIMARY KEY
 );
 
 CREATE TABLE SCHEMA(

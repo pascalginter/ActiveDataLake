@@ -7,7 +7,7 @@
 
 struct ListNamespacesResponse {
     std::string nextPageToken;
-    std::vector<std::vector<std::string>> namespaces = { {"tpch", "sf-1"} };
+    std::vector<std::vector<std::string>> namespaces = {};
 };
 
 // JSON serialization

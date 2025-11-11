@@ -15,16 +15,16 @@
 #include "../../dto/IcebergRestDtos/ListTablesResponse.hpp"
 #include "../../dto/IcebergRestDtos/LoadTableResponse.hpp"
 
+#include "../../util/uuid.hpp"
+
 class IcebergCatalogController final : public oatpp::web::server::api::ApiController {
     static thread_local pqxx::connection conn;
-    static std::unordered_map<String, std::vector<IcebergMetadata>> namespaces;
     static thread_local String buffer;
     std::atomic<int64_t> ref = 0;
-    std::atomic<int64_t> successfulCommits = 0;
-    std::atomic<int64_t> failedCommits = 0;
+
 public:
     explicit IcebergCatalogController(const std::shared_ptr<oatpp::web::mime::ContentMappers>& apiContentMappers)
-            : oatpp::web::server::api::ApiController(apiContentMappers)
+            : ApiController(apiContentMappers)
     {}
 
 private:
@@ -44,10 +44,14 @@ public:
         return createResponse(Status::CODE_200, buffer);
     }
 
-    ENDPOINT("GET", "/v1/namespaces", listNamespaces,
-             QUERY(String, pageToken)){
-        std::cout << "List namespaces, page token = " << pageToken->c_str() << std::endl;
+    ENDPOINT("GET", "/v1/namespaces", listNamespaces){
+        std::cout << "List namespaces" << std::endl;
         ListNamespacesResponse response;
+        pqxx::work tx{conn};
+        for (const auto& [name] : tx.query<std::string>("SELECT name FROM namespace")) {
+            response.namespaces.push_back({name});
+        }
+        tx.commit();
         const nlohmann::json responseJson = response;
         buffer = responseJson.dump();
         return createDtoResponse(Status::CODE_200, buffer);
@@ -58,21 +62,27 @@ public:
         std::cout << "post namespace" << std::endl;
         const CreateNamespaceRequest cnq = nlohmann::json::parse(*request->readBodyToString());
         assert(cnq.namespaces.size() == 1);
-        namespaces[cnq.namespaces[0]] = {};
+        pqxx::work tx{conn};
+        tx.exec("INSERT INTO namespaces(name) VALUES ($1)", pqxx::params{cnq.namespaces.front()});
+        tx.commit();
         return createResponse(Status::CODE_200);
     }
 
-    ENDPOINT("POST", "v1/namespaces/{nspace}/{table}", postTable,
-            PATH(String, nspace), PATH(String, table),
+    ENDPOINT("POST", "v1/namespaces/{nspace}/tables", postTable,
+            PATH(String, nspace),
             REQUEST(std::shared_ptr<IncomingRequest>, request)) {
-        std::cout << "post table" << std::endl;
         const CreateTableRequest tableRequest = nlohmann::json::parse(*request->readBodyToString());
+        std::cout << "post table " << nspace->c_str() << " " << tableRequest.name << std::endl;
         IcebergMetadata metadata;
         metadata.schemas.push_back(tableRequest.schema);
         assert(tableRequest.partitionSpec && tableRequest.writeOrder);
         metadata.partitionSpecs.push_back(*tableRequest.partitionSpec);
         metadata.sortOrders.push_back(*tableRequest.writeOrder);
-        namespaces[nspace].push_back(metadata);
+        std::string serializedMetadata = nlohmann::json(metadata);
+
+        pqxx::work tx{conn};
+        tx.exec("INSERT INTO tables(table_uuid, name, last_sequence_number, last_updated_ms, current_snapshot_id) VALUES ($1, $2, $3, $4, $5)",
+               pqxx::params{uuid::generate_uuid_v4(), tableRequest.name, 0, 0, 0});
 
         ref = metadata.currentSnapshotId;
         UpdateTableResponse response;
@@ -80,12 +90,14 @@ public:
         response.metadataLocation = "./metadata/v1.json";
         nlohmann::json responseJson = response;
         buffer = responseJson.dump();
+        tx.commit();
         return createResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("POST", "v1/namespaces/{nspace}/tables/{table}", commit,
             PATH(String, nspace), PATH(String, table),
             REQUEST(std::shared_ptr<IncomingRequest>, request)) {
+        std::cout << "Commit table version " << table->c_str() << std::endl;
         static std::atomic<int32_t> fileId = 0;
         CommitTableRequest commitRequest = nlohmann::json::parse(*request->readBodyToString());
         assert(commitRequest.requirements.size() == 2);
@@ -93,14 +105,14 @@ public:
         assert(commitRequest.requirements[1].type.starts_with("assert-table-uuid"));
 
         if (ref != commitRequest.requirements[0].snapshotId) {
-            ++failedCommits;
             ErrorResponse response("The commit has failed", "CommitFailedException", 409);
             nlohmann::json responseJson = response;
             buffer = responseJson.dump();
             return createResponse(Status::CODE_409, buffer);
         }
-
-        auto metadata = namespaces[nspace][0];
+        pqxx::work tx{conn};
+        IcebergMetadata metadata = nlohmann::json(std::get<0>(
+            tx.query1<std::string>("SELECT metadata FROM tables WHERE name = $1", pqxx::params{table->c_str()})));
         metadata.snapshots.push_back(commitRequest.updates[0].snapshot);
         metadata.currentSnapshotId = metadata.snapshots.size();
 
@@ -115,26 +127,17 @@ public:
         out << buffer->c_str();
 
         if (ref.compare_exchange_weak(commitRequest.requirements[0].snapshotId, metadata.currentSnapshotId)) {
-            namespaces[nspace][0] = metadata;
-            ++successfulCommits;
+            std::string serializedMetadata = nlohmann::json(metadata);
+            tx.exec("UPDATE tables SET metadata = $1 WHERE name = $2", pqxx::params(serializedMetadata, table->c_str()));
+            tx.commit();
             ref = metadata.currentSnapshotId;
             return createResponse(Status::CODE_200, buffer);
         } else {
-            ++failedCommits;
             ErrorResponse errorResponse("The commit has failed", "CommitFailedException", 409);
             nlohmann::json errorResponseJson = errorResponse;
             buffer = errorResponseJson.dump();
             return createResponse(Status::CODE_409, buffer);
         }
-    }
-
-    ENDPOINT("GET", "/v1/statistics", getStatistics) {
-        nlohmann::json json = {
-            {"success", successfulCommits.load()},
-            {"failed", failedCommits.load()}
-        };
-        buffer = json.dump();
-        return createResponse(Status::CODE_200, buffer);
     }
 
     ENDPOINT("GET", "/v1/namespaces/{nspace}", getNamespace,
@@ -148,9 +151,10 @@ public:
         std::cout << "List tables " << nspace->c_str() << std::endl;
         ListTablesResponse response;
         pqxx::work tx{conn};
-        for (const auto& [name] : tx.query<std::string>("SELECT name FROM table")) {
+        for (const auto& [name] : tx.query<std::string>("SELECT name FROM tables")) {
             response.identifiers.emplace_back();
             response.identifiers.back().name = name;
+            response.identifiers.back().nspace = {nspace};
         }
         tx.commit();
         const nlohmann::json responseJson = response;
@@ -163,9 +167,12 @@ public:
         std::cout << "Load table " << nspace->c_str() << " " << table->c_str() << std::endl;
         LoadTableResponse response;
         response.metadataLocation = "./metadata/v1.json";
-        response.metadata = namespaces[nspace->c_str()][0];
+        pqxx::work tx{conn};
+        response.metadata = nlohmann::json(std::get<0>(
+            tx.query1<std::string>("SELECT metadata FROM tables WHERE name = $1", pqxx::params{table->c_str()})));
         const nlohmann::json responseJson = response;
         buffer = responseJson.dump();
+        tx.commit();
         return createResponse(Status::CODE_200, buffer);
     }
 
