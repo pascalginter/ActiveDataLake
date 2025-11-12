@@ -63,7 +63,7 @@ inline void from_json(const nlohmann::json& j, IcebergMetadata& m) {
     m.defaultSpecId = j["default-spec-id"];
     m.lastPartitionId = j["last-partition-id"];
     m.currentSnapshotId = j["current-snapshot-id"];
-    m.snapshots = j["snapshot"];
+    m.snapshots = j["snapshots"];
     m.sortOrders = j["sort-orders"];
     m.defaultSortOrderId = j["default-sort-order-id"];
 }
