@@ -4,20 +4,21 @@ DROP TABLE Snapshot CASCADE;
 DROP TABLE ManifestEntry CASCADE;
 DROP TABLE Schema CASCADE;
 DROP TABLE Tables CASCADE;
-DROP TABLE Namespace CACADE;
+DROP TABLE Namespace CASCADE;
 
 CREATE TABLE BufferedFiles(
     file_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    file_name VARCHAR,
-    finalized BOOL,
-    size INT
+    file_name VARCHAR NOT NULL,
+    finalized BOOL NOT NULL,
+    size INT NOT NULL,
+    isDelete BOOL NOT NULL
 );
 
 CREATE TABLE BufferedData(
     file_id INT REFERENCES BufferedFiles,
-    part INT,
-    content BYTEA,
-    size INT,
+    part INT NOT NULL,
+    content BYTEA NOT NULL,
+    size INT NOT NULL,
     PRIMARY KEY (file_id, part)
 );
 

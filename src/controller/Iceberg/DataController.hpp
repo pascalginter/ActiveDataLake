@@ -129,33 +129,63 @@ public:
         return createResponse(Status::CODE_200, "");
     }
 
+    static void handleSingleFileUpload(pqxx::work& tx, const oatpp::String& fileName, pqxx::binarystring& bin_str, bool isDelete) {
+        tx.exec("INSERT INTO BufferedFiles(file_name, finalized, size, isDelete) VALUES ($1, $2, $3, $4)",
+            pqxx::params{*fileName, true, bin_str.size(), isDelete});
+        auto fileId = std::get<0>(tx.query1<int>("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}));
+        tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
+                   pqxx::params{fileId, 0, bin_str, bin_str.size()});
+        tx.commit();
+    }
+
     ENDPOINT("PUT", "/data/{tableName}/{fileName}", putData,
-    REQUEST(std::shared_ptr<IncomingRequest>, request),
-         PATH(String, tableName),
-         PATH(String, fileName)) {
+            REQUEST(std::shared_ptr<IncomingRequest>, request),
+            PATH(String, tableName), PATH(String, fileName)) {
         pqxx::work tx{conn};
         std::cout << "put matched" << std::endl;
         auto parameters = request->getQueryParameters().getAll();
         const oatpp::data::share::StringKeyLabel label("partNumber");
-        assert(parameters.contains(label));
-        int partId;
-        const auto [fst, snd] = parameters.equal_range(label);
-        for (auto b = fst; b != snd; ++b) {
-            partId = atoi(b->second.std_str().c_str());
-        }
+        const auto content = request->readBodyToString();
+        pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
+
         try {
-            const auto content = request->readBodyToString();
-            pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
+            if(parameters.contains(label)) {
+                // multipart upload
+                int partId;
+                const auto [fst, snd] = parameters.equal_range(label);
+                for (auto b = fst; b != snd; ++b) {
+                    partId = atoi(b->second.std_str().c_str());
+                }
 
-            auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
+                auto fileId = tx.exec("SELECT file_id FROM BufferedFiles WHERE file_name = $1", pqxx::params{*fileName}).one_row()[0].as<int>();
 
-            tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
-                pqxx::params{fileId, partId, bin_str, bin_str.size()});
-            tx.exec("UPDATE BufferedFiles SET size = size + $1 WHERE file_id = $2", pqxx::params{bin_str.size(), fileId});
-            tx.commit();
+                tx.exec("INSERT INTO BufferedData(file_id, part, content, size) VALUES ($1, $2, $3, $4)",
+                    pqxx::params{fileId, partId, bin_str, bin_str.size()});
+                tx.exec("UPDATE BufferedFiles SET size = size + $1 WHERE file_id = $2", pqxx::params{bin_str.size(), fileId});
+                tx.commit();
+            }else {
+               handleSingleFileUpload(tx, fileName, bin_str, false);
+            }
             auto response = createResponse(Status::CODE_200, "");
             response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
+            return response;
+        }catch (const std::exception& e) {
+            std::cout << e.what() << std::endl;
+            return createResponse(Status::CODE_500, "");
+        }
+    }
 
+    ENDPOINT("PUT", "data/delete/{tableName}/{fileName}", putDeleteData,
+            REQUEST(std::shared_ptr<IncomingRequest>, request),
+            PATH(String, tableName), PATH(String, fileName)) {
+        std::cout << "delete put matched" << std::endl;
+        try {
+            pqxx::work tx{conn};
+            const auto content = request->readBodyToString();
+            pqxx::binarystring bin_str(content.get()->data(), content.get()->size());
+            handleSingleFileUpload(tx, fileName, bin_str, false);
+            auto response = createResponse(Status::CODE_200, "");
+            response->putHeader("ETag", "\"b54357faf0632cce46e942fa68356b38\"");
             return response;
         }catch (const std::exception& e) {
             std::cout << e.what() << std::endl;
