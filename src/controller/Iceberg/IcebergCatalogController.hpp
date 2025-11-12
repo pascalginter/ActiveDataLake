@@ -82,7 +82,7 @@ public:
 
         pqxx::work tx{conn};
         tx.exec("INSERT INTO tables(table_uuid, name, namespace, metadata, last_sequence_number, last_updated_ms, current_snapshot_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-               pqxx::params{uuid::generate_uuid_v4(), tableRequest.name, serializedMetadata, nspace->c_str(), 0, 0, 0});
+               pqxx::params{uuid::generate_uuid_v4(), tableRequest.name, nspace->c_str(), serializedMetadata, 0, 0, 0});
         ref = metadata.currentSnapshotId;
         UpdateTableResponse response;
         response.metadata = metadata;
@@ -98,7 +98,8 @@ public:
             REQUEST(std::shared_ptr<IncomingRequest>, request)) {
         std::cout << "Commit table version " << table->c_str() << std::endl;
         static std::atomic<int32_t> fileId = 0;
-        CommitTableRequest commitRequest = nlohmann::json::parse(*request->readBodyToString());
+        std::string requestBody = *request->readBodyToString();
+        CommitTableRequest commitRequest = nlohmann::json::parse(requestBody);
         assert(commitRequest.requirements.size() == 2);
         assert(commitRequest.requirements[0].type.starts_with("assert-ref-snapshot-id"));
         assert(commitRequest.requirements[1].type.starts_with("assert-table-uuid"));
@@ -110,10 +111,11 @@ public:
             return createResponse(Status::CODE_409, buffer);
         }
         pqxx::work tx{conn};
-        IcebergMetadata metadata = nlohmann::json(std::get<0>(
-            tx.query1<std::string>("SELECT metadata FROM tables WHERE name = $1", pqxx::params{table->c_str()})));
+        std::string serializedMetadata = std::get<0>(
+            tx.query1<std::string>("SELECT metadata FROM tables WHERE name = $1", pqxx::params{table->c_str()}));
+        IcebergMetadata metadata = nlohmann::json::parse(serializedMetadata);
         metadata.snapshots.push_back(commitRequest.updates[0].snapshot);
-        metadata.currentSnapshotId = metadata.snapshots.size();
+        metadata.currentSnapshotId = commitRequest.updates[0].snapshot.snapshotId;
 
         ++fileId;
         std::string location = "./metadata/" + std::to_string(fileId) + ".json";
@@ -126,7 +128,7 @@ public:
         out << buffer->c_str();
 
         if (ref.compare_exchange_weak(commitRequest.requirements[0].snapshotId, metadata.currentSnapshotId)) {
-            std::string serializedMetadata = nlohmann::json(metadata);
+            std::string serializedMetadata = nlohmann::json(metadata).dump();
             tx.exec("UPDATE tables SET metadata = $1 WHERE name = $2", pqxx::params(serializedMetadata, table->c_str()));
             tx.commit();
             ref = metadata.currentSnapshotId;
@@ -167,8 +169,10 @@ public:
         LoadTableResponse response;
         response.metadataLocation = "./metadata/v1.json";
         pqxx::work tx{conn};
-        response.metadata = nlohmann::json(std::get<0>(
-            tx.query1<std::string>("SELECT metadata FROM tables WHERE name = $1", pqxx::params{table->c_str()})));
+        std::string value = std::get<0>(
+            tx.query1<std::string>("SELECT metadata FROM tables WHERE name = $1", pqxx::params{table->c_str()}));
+        auto jsonValue= nlohmann::json::parse(value);
+        response.metadata = jsonValue;
         const nlohmann::json responseJson = response;
         buffer = responseJson.dump();
         tx.commit();
